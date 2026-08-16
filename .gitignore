@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Generated output - regenerate, don't commit
+outputs/*
+!outputs/.gitkeep
+*.gltf
+*.glb
+*.png
+*.jpg
+!docs/**/*.png
+
+# 3D asset library - large binaries, downloaded via script
+data/asset_library/*
+!data/asset_library/.gitkeep
+!data/asset_library/README.md
+
+# Vector index - rebuilt from the asset library
+data/index/
+
+# Unity
+engine/unity_project/Library/
+engine/unity_project/Temp/
+engine/unity_project/Obj/
+engine/unity_project/Build/
+engine/unity_project/Logs/
+engine/unity_project/UserSettings/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

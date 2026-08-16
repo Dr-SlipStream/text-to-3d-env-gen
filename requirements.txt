@@ -1,0 +1,19 @@
+# Core pipeline
+pydantic>=2.0          # scene spec validation
+requests>=2.31         # talks to the local Ollama server
+
+# Stage 2 (asset retrieval) - installed in week 2
+# sentence-transformers>=2.2
+# chromadb>=0.4
+
+# Stage 3 (terrain + layout) - installed in week 3
+# numpy>=1.24
+# noise>=1.2.2
+# scipy>=1.11
+
+# Export + preview - installed in week 5
+# trimesh>=4.0
+# pygltflib>=1.16
+
+# Dev
+pytest>=7.4
