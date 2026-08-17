@@ -166,6 +166,84 @@ CATEGORY_DEFAULT_RADIUS = {
     "light_source": 0.5,
 }
 
+# Some object names are reliably mis-categorised by the LLM -- it called a
+# forge a "structure" (it's a building you enter). Rather than trust the
+# model, we correct known cases here. Checked as substrings of the name.
+OBJECT_CATEGORY_OVERRIDES = {
+    # buildings the LLM tends to call structures
+    "forge": "building",
+    "smithy": "building",
+    "blacksmith": "building",
+    "tavern": "building",
+    "inn": "building",
+    "windmill": "building",
+    "mill": "building",
+    "church": "building",
+    "chapel": "building",
+    "tower": "building",
+    "barn": "building",
+    "stable": "building",
+    "shop": "building",
+    "market stall": "building",
+    "hut": "building",
+    "cottage": "building",
+    "house": "building",
+    "tent": "building",
+    # structures the LLM tends to call buildings
+    "bridge": "structure",
+    "fence": "structure",
+    "wall": "structure",
+    "gate": "structure",
+    "well": "structure",
+    "fountain": "structure",
+    # light sources it tends to call props
+    "torch": "light_source",
+    "lantern": "light_source",
+    "campfire": "light_source",
+    "brazier": "light_source",
+    "lamp": "light_source",
+}
+
+
+def override_category(name: str, proposed: str) -> str:
+    """Correct a category when the object name says otherwise.
+
+    Longest match wins, so "market stall" beats "stall".
+    """
+    n = name.lower().strip()
+    best_key = None
+    for key in OBJECT_CATEGORY_OVERRIDES:
+        if key in n and (best_key is None or len(key) > len(best_key)):
+            best_key = key
+    return OBJECT_CATEGORY_OVERRIDES[best_key] if best_key else proposed
+
+
+# Things an LLM lists as "objects" that are not placeable models. Smoke, fog
+# and mist are atmosphere (already captured in lighting.weather); shadows and
+# light rays are rendering effects. Placing a mesh for these is always wrong --
+# we saw "smoke" resolve to a fire basket. Dropped during validation.
+NON_PHYSICAL_OBJECTS = {
+    "smoke", "fog", "mist", "haze", "steam", "vapour", "vapor", "cloud",
+    "clouds", "shadow", "shadows", "light", "lights", "lighting", "sunlight",
+    "moonlight", "sunbeam", "light ray", "god ray", "glow", "ambience",
+    "atmosphere", "wind", "breeze", "sound", "music", "silence", "air",
+    "darkness", "gloom", "dusk", "dawn", "night", "day", "sky", "skybox",
+    "weather", "rain", "snow", "storm", "reflection", "particle", "particles",
+    "dust motes", "aura", "mood", "feeling", "sense",
+}
+
+
+def is_non_physical(name: str) -> bool:
+    """True if this 'object' is atmosphere or an effect, not a placeable model."""
+    n = name.lower().strip()
+    if n in NON_PHYSICAL_OBJECTS:
+        return True
+    # Also catch "smoke plume", "wisps of mist", "rain puddles" etc. where the
+    # head noun is atmospheric.
+    tokens = set(n.split())
+    return bool(tokens & NON_PHYSICAL_OBJECTS) and len(tokens) <= 2
+
+
 MAX_OBJECT_TYPES = 12    # distinct object entries allowed per scene
 MAX_QUANTITY = 40        # instances of any single object type
 

@@ -120,6 +120,13 @@ class SceneObject(BaseModel):
 
     @model_validator(mode="after")
     def _fill_placement(self):
+        # Correct categories the LLM commonly gets wrong ("forge" is a
+        # building, not a structure). Done here so every code path benefits.
+        corrected = vocab.override_category(self.name, self.category)
+        if corrected != self.category:
+            self.category = corrected
+            self.placement = None      # re-derive from the corrected category
+
         if self.placement is None:
             self.placement = vocab.CATEGORY_DEFAULT_PLACEMENT.get(
                 self.category, "scatter"
@@ -164,6 +171,18 @@ class SceneSpec(BaseModel):
 
     @model_validator(mode="after")
     def _post(self):
+        # Drop atmosphere and effects the LLM listed as objects. "smoke" has
+        # no mesh; trying to place one always picks something wrong.
+        physical = []
+        for obj in self.objects:
+            if vocab.is_non_physical(obj.name):
+                self.warnings.append(
+                    f"dropped {obj.name!r}: atmosphere/effect, not a placeable object"
+                )
+            else:
+                physical.append(obj)
+        self.objects = physical
+
         # Cap object variety so a runaway LLM can't request 200 object types.
         if len(self.objects) > vocab.MAX_OBJECT_TYPES:
             self.warnings.append(

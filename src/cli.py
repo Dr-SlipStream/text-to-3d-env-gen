@@ -3,6 +3,7 @@
 Usage:
     python -m src.cli "a foggy medieval village at dusk"
     python -m src.cli "a desert outpost" --fallback     # skip the LLM
+    python -m src.cli "a village" --resolve             # also match 3D assets
     python -m src.cli --check                            # environment check
 """
 
@@ -10,6 +11,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+
+from pathlib import Path
 
 from .llm_client import LLMClient
 from .prompt_decomposition import decompose
@@ -42,7 +45,13 @@ def cmd_check() -> int:
     return 1
 
 
-def cmd_parse(prompt: str, fallback: bool, model: str | None) -> int:
+def cmd_parse(
+    prompt: str,
+    fallback: bool,
+    model: str | None,
+    resolve: bool,
+    show_json: bool,
+) -> int:
     client = LLMClient(model=model) if model else None
     spec = decompose(prompt, client=client, force_fallback=fallback)
 
@@ -55,7 +64,30 @@ def cmd_parse(prompt: str, fallback: bool, model: str | None) -> int:
             print(f"  ! {w}")
         print()
 
-    print(spec.to_json())
+    if show_json or not resolve:
+        print(spec.to_json())
+
+    if resolve:
+        from .asset_index import AssetIndex
+        from .asset_resolution import resolve_scene
+
+        try:
+            index = AssetIndex.from_manifest()
+        except FileNotFoundError as e:
+            print(f"\nCannot resolve assets:\n{e}")
+            return 1
+
+        print(f"\nAsset library: {len(index)} assets "
+              f"({', '.join(f'{k}={v}' for k, v in index.categories().items())})")
+        print(f"Embedder     : {index.embedder.name}\n")
+
+        scene = resolve_scene(spec, index)
+        print(scene.report())
+        print(f"\n{scene.summary()}")
+
+        for w in scene.warnings:
+            print(f"  ! {w}")
+
     return 0
 
 
@@ -67,6 +99,10 @@ def main(argv=None) -> int:
     p.add_argument("--model", help="override the Ollama model name")
     p.add_argument("--check", action="store_true",
                    help="check whether the local LLM is set up correctly")
+    p.add_argument("--resolve", action="store_true",
+                   help="also match scene objects to 3D assets (stage 2)")
+    p.add_argument("--json", action="store_true", dest="show_json",
+                   help="always print the full scene spec JSON")
     args = p.parse_args(argv)
 
     if args.check:
@@ -74,7 +110,8 @@ def main(argv=None) -> int:
     if not args.prompt:
         p.print_help()
         return 1
-    return cmd_parse(args.prompt, args.fallback, args.model)
+    return cmd_parse(args.prompt, args.fallback, args.model,
+                     args.resolve, args.show_json)
 
 
 if __name__ == "__main__":

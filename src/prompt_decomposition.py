@@ -53,6 +53,9 @@ Rules:
 - Quantities should suit the scene size: a small scene has fewer objects.
 - Scenery like trees and rocks should use "scatter"; buildings usually
   "along_path" or "cluster"; a single landmark uses "center".
+- List only PHYSICAL objects that could be a 3D model. Never list atmosphere
+  or effects -- no smoke, fog, mist, shadows, light rays, wind or weather.
+  Those belong in the "lighting" fields, not "objects".
 """
 
 USER_TEMPLATE = """Environment description:

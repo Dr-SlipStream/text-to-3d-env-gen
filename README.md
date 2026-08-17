@@ -48,11 +48,18 @@ python -m src.cli "a foggy medieval village at dusk"
 ```
 
 Full setup instructions, including installing Ollama: **[docs/SETUP.md](docs/SETUP.md)**
+Building the 3D asset library: **[docs/ASSETS.md](docs/ASSETS.md)**
 
 The pipeline works without the LLM too (keyword fallback), so you can develop and test on any machine:
 
 ```bash
 python -m src.cli "a dense forest camp at night" --fallback
+```
+
+Once the asset library is built, resolve objects to real 3D models:
+
+```bash
+python -m src.cli "a foggy medieval village at dusk" --resolve
 ```
 
 ## Project layout
@@ -64,11 +71,20 @@ src/
   llm_client.py             Ollama wrapper
   prompt_decomposition.py   stage 1: prompt → SceneSpec
   fallback_parser.py        keyword parser used when the LLM is unavailable
+  asset_rules.py            filename cleaning + category classification
+  asset_index.py            stage 2: embedding + vector search over assets
+  asset_resolution.py       stage 2: SceneSpec → concrete 3D models
   cli.py                    command-line entry point
+scripts/
+  ingest_assets.py          scans downloaded packs → manifest.json
+  inspect_library.py        what's actually in the library, and what isn't
 tests/                      pytest suite (runs without a GPU or LLM)
 data/asset_library/         3D assets (downloaded, not committed)
 engine/unity_project/       Unity scene assembly and export
-docs/                       setup guide, architecture notes, results
+docs/
+  SETUP.md                  getting the project running
+  ASSETS.md                 building the 3D asset library
+  WALKTHROUGH.md            full explanation of what's built and why
 ```
 
 ### The Scene Specification
@@ -94,7 +110,7 @@ To add a new theme, object type or mood, edit `src/vocab.py` — never hardcode 
 | Week | Milestone | Status |
 |---|---|---|
 | 1 | Repo scaffold, scene schema, prompt decomposition | ✅ Done |
-| 2 | Asset library curation + retrieval index | ⬜ |
+| 2 | Asset library curation + retrieval index | ✅ Done |
 | 3 | Terrain generation + procedural layout engine | ⬜ |
 | 4 | Playtest agent + gameplay-flow scoring *(novelty)* | ⬜ |
 | 5 | Unity integration: collision, navmesh, import | ⬜ |
@@ -108,4 +124,5 @@ To add a new theme, object type or mood, edit `src/vocab.py` — never hardcode 
 python -m pytest tests/ -v
 ```
 
-Tests never touch the LLM, so they pass on any machine.
+102 tests. They never touch the LLM, GPU or asset library, so they pass on any
+machine. About half are regression tests encoding bugs we actually hit.
