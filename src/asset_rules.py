@@ -120,6 +120,11 @@ MODULAR_TOKENS = {
     "corner", "inner", "outer", "mid", "middle", "edge", "side", "half",
     "cap", "junction", "crossing", "tee", "segment", "piece", "part",
     "top", "base", "bottom", "end", "joint", "connector", "transition",
+    # Cliff and terrain sections are meant to tile into a landscape, not to
+    # be dropped in as boulders. Scattered individually they read as grey
+    # archways littering the map -- which is how a forest scene ended up
+    # covered in them.
+    "cliff", "terrain", "wall", "ramp", "road", "track", "corridor",
 }
 
 
@@ -131,7 +136,11 @@ def is_modular(name: str) -> bool:
     """
     tokens = set(name.lower().split())
     hits = tokens & MODULAR_TOKENS
-    return bool(hits) and len(tokens) > len(hits)
+    if not hits:
+        return False
+    # A bare "wall" or "cliff" is still a usable object; it's the qualified
+    # variants ("cliff cave stone", "terrain road corner") that are fragments.
+    return len(tokens) > len(hits) or len(tokens) > 1
 
 
 VOWELS = set("aeiouy")

@@ -52,7 +52,7 @@ OBJECT_HINTS = {
     "crate": ("prop", 8), "crates": ("prop", 8),
     "cart": ("prop", 3), "wagon": ("prop", 2),
     "sign": ("prop", 4), "signs": ("prop", 4),
-    "crystal": ("prop", 6), "crystals": ("prop", 6),
+    "crystal": ("rock", 6), "crystals": ("rock", 6),
     "debris": ("prop", 10), "container": ("prop", 6),
     # lights
     "torch": ("light_source", 8), "torches": ("light_source", 8),
@@ -79,10 +79,13 @@ THEME_DEFAULT_OBJECTS = {
         ("rock", "rock", 14), ("crate", "prop", 8),
         ("fence", "structure", 6), ("lamp", "light_source", 4),
     ],
+    # Named against what the library actually contains. Asking for domes,
+    # neon and containers -- none of which exist in the sci-fi pack -- meant
+    # every sci-fi scene opened with four guaranteed weak matches.
     "sci_fi_base": [
-        ("dome", "building", 5), ("container", "prop", 10),
-        ("platform", "structure", 3), ("neon", "light_source", 8),
-        ("rock", "rock", 10), ("crystal", "prop", 6),
+        ("hangar", "building", 5), ("platform", "structure", 6),
+        ("machine", "prop", 8), ("barrel", "prop", 6),
+        ("rock", "rock", 10), ("pipe", "prop", 5),
     ],
 }
 
@@ -113,8 +116,14 @@ SIZE_HINTS = {
 }
 
 
-def _find(text: str, keyword_map: dict, default: str) -> str:
-    """Return the first vocabulary value whose keywords appear in `text`."""
+def _find(text: str, keyword_map: dict, default: str,
+          report_match: bool = False):
+    """Return the first vocabulary value whose keywords appear in `text`.
+
+    With `report_match`, also returns whether anything actually matched --
+    the caller needs to know the difference between "the prompt said village"
+    and "we fell back to village because nothing matched".
+    """
     best_value, best_pos, best_len = default, len(text) + 1, 0
     for value, words in keyword_map.items():
         for w in words:
@@ -123,14 +132,16 @@ def _find(text: str, keyword_map: dict, default: str) -> str:
                 # Prefer earlier mentions; break ties with longer keywords.
                 if pos < best_pos or (pos == best_pos and len(w) > best_len):
                     best_value, best_pos, best_len = value, pos, len(w)
-    return best_value
+    matched = best_len > 0
+    return (best_value, matched) if report_match else best_value
 
 
 def parse(prompt: str) -> SceneSpec:
     """Turn a free-form prompt into a SceneSpec using keyword matching only."""
     text = " " + prompt.lower().strip() + " "
 
-    theme = _find(text, vocab.THEME_KEYWORDS, "medieval_village")
+    theme, theme_matched = _find(text, vocab.THEME_KEYWORDS,
+                                 "medieval_village", report_match=True)
     terrain_type = _find(
         text, vocab.TERRAIN_KEYWORDS, vocab.THEME_DEFAULT_TERRAIN[theme]
     )
@@ -171,6 +182,11 @@ def parse(prompt: str) -> SceneSpec:
             )
 
     warnings = []
+    if not theme_matched:
+        warnings.append(
+            f"no recognised theme in the prompt; generated as "
+            f"'{theme}'. Supported themes: {', '.join(vocab.THEMES)}"
+        )
 
     # Collapse synonym groups ("blacksmith" + "forge" -> one building).
     for group, canonical, category in SYNONYM_GROUPS:
@@ -238,5 +254,6 @@ def parse(prompt: str) -> SceneSpec:
         objects=objects,
         source_prompt=prompt,
         parser="fallback",
+        theme_recognised=theme_matched,
         warnings=warnings,
     )

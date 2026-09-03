@@ -35,9 +35,21 @@ from . import vocab
 DEFAULT_MANIFEST = Path("data/asset_library/manifest.json")
 
 # How far to demote snap-together fragments relative to complete models.
-# Large enough to lose to any real match, small enough that a fragment still
-# beats nothing when the library has no whole object of that kind.
 MODULAR_PENALTY = 0.20
+
+# Theme adjustments are a tie-breaker, not a veto.
+#
+# Originally +0.12 / -0.10 -- a 0.22 swing, large enough to beat the semantic
+# signal outright. A medieval prompt asking for a "barrel" got a *canoe*,
+# because the canoe sat in an on-theme pack while all seven real barrels sat
+# in off-theme ones. Theme should nudge between comparable options, never
+# override a better match.
+THEME_BONUS = 0.05
+THEME_PENALTY = 0.04
+
+# A literal word match is strong evidence and should outrank pack politics:
+# an asset actually named "barrel" beats an on-theme canoe.
+EXACT_WORD_BONUS = 0.15
 
 
 # ---------------------------------------------------------------------------
@@ -180,8 +192,14 @@ class AssetIndex:
             [self._searchable_text(a) for a in assets]
         )
         self._by_category: Dict[str, List[int]] = {}
+        # Word sets per asset, for the literal-match pre-filter.
+        self._name_words: List[set] = []
         for i, a in enumerate(assets):
             self._by_category.setdefault(a["category"], []).append(i)
+            self._name_words.append({
+                w for w in re.split(r"[^a-z0-9]+", a.get("name", "").lower())
+                if len(w) > 2
+            })
 
     # -- construction -----------------------------------------------------
     @classmethod
@@ -225,12 +243,29 @@ class AssetIndex:
         qvec = self.embedder.encode([query])[0]
         scores = self._matrix @ qvec                     # cosine similarity
 
+        query_words = {w for w in re.split(r"[^a-z0-9]+", query.lower())
+                       if len(w) > 2}
+
         candidates = self._by_category.get(category) if category else None
         if category and not candidates:
             # Nothing in that category -- search everything rather than fail.
             candidates = None
 
-        idxs = candidates if candidates is not None else range(len(self.assets))
+        idxs = list(candidates if candidates is not None
+                    else range(len(self.assets)))
+
+        # If any asset's name literally contains a word from the query, search
+        # only those. A word match is far stronger evidence than embedding
+        # similarity, and without this the search talks itself out of the
+        # obvious answer whenever one theme dominates the library: a sci-fi
+        # scene asking for a "platform" matched an "archery building", and
+        # "crystal" matched "astronaut", because medieval assets outnumbered
+        # sci-fi ones ten to one.
+        if query_words:
+            literal = [i for i in idxs
+                       if query_words & self._name_words[i]]
+            if literal:
+                idxs = literal
 
         results = []
         for i in idxs:
@@ -238,22 +273,32 @@ class AssetIndex:
             score = float(scores[i])
             reason = ""
 
+            # A literal word match is the strongest signal we have. Without
+            # this, embedding similarity alone let an on-theme canoe outrank
+            # an asset literally named "barrel".
+            asset_words = set(asset.get("name", "").lower().split())
+            if query_words & asset_words:
+                score += EXACT_WORD_BONUS
+                reason = "exact word"
+
             # A modular fragment ("roof corner inner") is a poor stand-in for
             # a whole object, so rank it below complete models -- but keep it
             # available in case the library has nothing better.
             if asset.get("modular"):
                 score -= MODULAR_PENALTY
-                reason = "modular fragment"
+                reason = reason or "modular fragment"
 
             if theme:
                 hints = asset.get("theme_hints") or []
                 if hints:
                     if theme in hints:
-                        score += 0.12
-                        reason = "theme match" if not reason else reason
+                        score += THEME_BONUS
+                        reason = reason or "theme match"
                     else:
-                        score -= 0.10
-                        reason = "off-theme pack" if not reason else reason
+                        score -= THEME_PENALTY
+                        reason = reason or "off-theme pack"
+
+            results.append(AssetMatch(asset, score, reason))
 
             results.append(AssetMatch(asset, score, reason))
 

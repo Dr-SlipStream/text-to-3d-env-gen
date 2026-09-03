@@ -157,6 +157,11 @@ class SceneSpec(BaseModel):
     # something looks wrong and you need to know which stage produced it.
     source_prompt: str = ""
     parser: str = "unknown"          # "llm" or "fallback"
+    # Whether the prompt actually named a theme we support, or we picked a
+    # default. An unrecognised prompt still produces a valid scene, but the
+    # user should be told it isn't what they asked for -- silently returning a
+    # medieval village for "an underwater city" is worse than saying so.
+    theme_recognised: bool = True
     warnings: List[str] = Field(default_factory=list)
 
     @field_validator("theme")

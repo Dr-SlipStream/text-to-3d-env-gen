@@ -1,19 +1,13 @@
 # Core pipeline
 pydantic>=2.0          # scene spec validation
 requests>=2.31         # talks to the local Ollama server
-numpy>=1.24            # vector index for asset retrieval
-trimesh>=4.0           # measures asset bounding boxes at ingest time
+numpy>=1.24            # vector search, terrain generation, transforms
+trimesh>=4.0           # measures assets, builds terrain mesh, exports glTF
+pygltflib>=1.16        # glTF/GLB writing (used by trimesh's exporter)
 
 # Optional but recommended: real semantic asset matching.
 # Without it, retrieval falls back to character matching (still works).
 # sentence-transformers>=2.2
-
-# Stage 3 (terrain + layout) - installed in week 3
-# noise>=1.2.2
-# scipy>=1.11
-
-# Export + preview - installed in week 5
-# pygltflib>=1.16
 
 # Dev
 pytest>=7.4

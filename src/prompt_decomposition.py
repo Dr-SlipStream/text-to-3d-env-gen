@@ -109,6 +109,19 @@ def decompose(
     spec.source_prompt = prompt
     spec.parser = "llm"
 
+    # The LLM must pick from our theme list, so it always returns something
+    # plausible. Cross-check against keyword evidence: if the prompt contains
+    # no word associated with any supported theme, the choice was a guess and
+    # the user should know.
+    lowered = f" {prompt.lower()} "
+    if not any(kw in lowered
+               for words in vocab.THEME_KEYWORDS.values() for kw in words):
+        spec.theme_recognised = False
+        spec.warnings.append(
+            f"prompt names no supported theme; generated as "
+            f"'{spec.theme}'. Supported: {', '.join(vocab.THEMES)}"
+        )
+
     # An LLM occasionally returns an empty or near-empty object list. A scene
     # with nothing in it is useless, so top it up from the keyword parser.
     if len(spec.objects) < 3:

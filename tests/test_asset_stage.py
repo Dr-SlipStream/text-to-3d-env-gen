@@ -383,3 +383,100 @@ def test_physical_objects_with_similar_names_kept():
         SceneObject(name="lighthouse", category="building", quantity=1),
     ])
     assert len(spec.objects) == 2
+
+
+# --- literal name matching --------------------------------------------------
+
+def _asset(name, category, pack, hints):
+    return {"id": f"{pack}/{name}".replace(" ", "_"), "name": name,
+            "category": category, "pack": pack, "file": "f",
+            "radius": 1.0, "height": 2.0, "modular": False,
+            "theme_hints": hints, "tags": name.split() + [category]}
+
+
+@pytest.fixture
+def lopsided_index():
+    """A library where one theme heavily outnumbers another, as real ones do.
+
+    The real library had ~100 medieval buildings against ~10 sci-fi ones.
+    """
+    assets = [_asset(n, "building", "medieval", ["medieval_village"])
+              for n in ["archery building", "stone tower", "tower house",
+                        "blacksmith shop", "market hall", "granary",
+                        "chapel", "manor", "barracks", "stable"]]
+    assets += [_asset(n, "building", "space", ["sci_fi_base"])
+               for n in ["structure dome", "hangar large a", "platform large"]]
+    assets += [_asset(n, "prop", "medieval", ["medieval_village"])
+               for n in ["astronaut b", "weapon rifle", "lantern candle"]]
+    assets += [_asset(n, "prop", "space", ["sci_fi_base"])
+               for n in ["crystal glow a", "antenna tall", "container metal"]]
+    return AssetIndex(assets, embedder=HashingEmbedder())
+
+
+@pytest.mark.parametrize("query,category,expect", [
+    ("platform", "building", "platform"),
+    ("dome structure", "building", "dome"),
+    ("hangar building", "building", "hangar"),
+    ("crystal", "prop", "crystal"),
+    ("antenna", "prop", "antenna"),
+    ("container crate", "prop", "container"),
+])
+def test_literal_name_match_beats_semantic_drift(lopsided_index, query,
+                                                 category, expect):
+    """When a library is dominated by one theme, embedding similarity alone
+    talks itself out of the obvious answer.
+
+    Measured on the real 1001-asset library: 'platform' matched an 'archery
+    building' at 0.43, 'crystal' matched 'astronaut', 'antenna' matched
+    'weapon rifle'. Every one of those had a correctly-named asset available.
+    """
+    hit = lopsided_index.best(query, category=category, theme="sci_fi_base")
+    assert expect in hit.name, f"{query} matched {hit.name}"
+    assert hit.score > 0.6
+
+
+def test_literal_match_does_not_reintroduce_the_barrel_bug():
+    """Barrels exist only in off-theme packs; the canoe is on-theme.
+
+    An earlier version let the theme bonus override the semantic score and a
+    medieval prompt asking for a barrel got a canoe.
+    """
+    assets = [
+        _asset("canoe", "prop", "nature", ["forest_camp", "medieval_village"]),
+        _asset("barrel", "prop", "survival", ["forest_camp", "desert_outpost"]),
+        _asset("barrel open", "prop", "survival", ["forest_camp"]),
+        _asset("bucket", "prop", "nature", ["medieval_village"]),
+    ]
+    index = AssetIndex(assets, embedder=HashingEmbedder())
+    hit = index.best("barrel", category="prop", theme="medieval_village")
+    assert "barrel" in hit.name
+
+
+def test_falls_back_to_semantic_when_no_literal_match(lopsided_index):
+    """The filter must narrow the search, never empty it."""
+    hit = lopsided_index.best("somethingnobodynamed", category="prop",
+                              theme="sci_fi_base")
+    assert hit is not None
+
+
+def test_literal_match_respects_category(lopsided_index):
+    """A literal match in the wrong category must not escape the filter."""
+    for hit in lopsided_index.search("crystal", category="building", top_k=5):
+        assert hit.category == "building"
+
+
+@pytest.mark.parametrize("name,modular", [
+    ("cliff stone", True),
+    ("cliff cave stone", True),
+    ("terrain road corner", True),
+    ("corridor wall", True),
+    ("rock", False),
+    ("rock large a", False),
+    ("stone tall g", False),
+])
+def test_terrain_sections_are_flagged_modular(name, modular):
+    """Cliff and terrain sections tile into a landscape; dropped in
+    individually as boulders they read as grey archways littering the map,
+    which is how a forest scene ended up covered in them.
+    """
+    assert asset_rules.is_modular(name) is modular

@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from .appearance import cap_scale, normalisation_scale
 from .asset_index import AssetIndex, AssetMatch
 from .schema import SceneObject, SceneSpec
 
@@ -61,6 +62,10 @@ class ResolvedObject:
         return self.spec.name
 
     @property
+    def category(self) -> str:
+        return self.spec.category
+
+    @property
     def quantity(self) -> int:
         return self.spec.quantity
 
@@ -69,13 +74,37 @@ class ResolvedObject:
         return self.spec.placement or "scatter"
 
     @property
+    def norm_scale(self) -> float:
+        """Factor bringing the model to a plausible real-world size.
+
+        Packs model at arbitrary scales -- without this a village is built
+        from 2m houses and reads as scattered debris.
+        """
+        if not self.match:
+            return 1.0
+        return normalisation_scale(
+            self.match.name, self.category,
+            self.match.radius, self.match.height)
+
+    @property
+    def max_scale(self) -> float:
+        """Largest scale allowed once placement jitter is applied."""
+        if not self.match:
+            return 1e9
+        return cap_scale(self.category, self.match.radius, self.match.height)
+
+    @property
     def radius(self) -> float:
-        """Footprint radius, from the real mesh when we have it."""
-        return self.match.radius if self.match else self.spec.radius
+        """Footprint radius in metres, after scale normalisation."""
+        if not self.match:
+            return self.spec.radius
+        return self.match.radius * self.norm_scale
 
     @property
     def height(self) -> float:
-        return self.match.height if self.match else self.spec.radius * 2
+        if not self.match:
+            return self.spec.radius * 2
+        return self.match.height * self.norm_scale
 
     @property
     def file(self) -> Optional[str]:

@@ -38,19 +38,22 @@ FORMAT_PRIORITY = [".glb", ".gltf", ".obj", ".fbx", ".dae", ".stl", ".ply"]
 
 
 def measure(path: Path) -> tuple:
-    """Return (radius, height) in metres, or (None, None) if unmeasurable.
+    """Return (radius, height, triangles), or (None, None, None) if unreadable.
 
     `radius` is the horizontal footprint used for overlap checks during
-    placement; `height` is used to sit objects correctly on the terrain.
+    placement; `height` sits objects correctly on the terrain; `triangles` is
+    the mesh's polygon count, which drives both visual fidelity (more
+    triangles = smoother silhouettes) and rendering cost. Summing it across a
+    scene gives the scene's total poly budget.
     """
     if path.suffix.lower() not in asset_rules.MEASURABLE_EXTENSIONS:
-        return None, None
+        return None, None, None
     try:
         import trimesh
 
         mesh = trimesh.load(path, force="mesh", process=False)
         if mesh is None or not hasattr(mesh, "bounds") or mesh.bounds is None:
-            return None, None
+            return None, None, None
 
         lo, hi = mesh.bounds
         dx, dy, dz = (hi - lo)
@@ -59,11 +62,13 @@ def measure(path: Path) -> tuple:
         radius = float(max(dx, dz)) / 2.0
         height = float(dy)
 
+        triangles = int(len(mesh.faces)) if hasattr(mesh, "faces") else None
+
         if not (radius > 0) or radius > 1000:      # guard against broken files
-            return None, None
-        return round(radius, 3), round(height, 3)
+            return None, None, triangles
+        return round(radius, 3), round(height, 3), triangles
     except Exception:
-        return None, None
+        return None, None, None
 
 
 def pick_best_file(files: list) -> Path:
@@ -131,7 +136,7 @@ def ingest(raw_dir: Path, manifest_path: Path, verbose: bool = False) -> dict:
             for v_idx, (stem, files) in enumerate(variants, start=1):
                 path = pick_best_file(files)
                 category = asset_rules.classify(name, pack)
-                radius, height = measure(path)
+                radius, height, triangles = measure(path)
 
                 if radius is None:
                     unmeasured += 1
@@ -155,6 +160,7 @@ def ingest(raw_dir: Path, manifest_path: Path, verbose: bool = False) -> dict:
                     "radius": radius,
                     "height": height,
                     "measured": radius is not None,
+                    "triangles": triangles,
                     "modular": asset_rules.is_modular(name),
                     "variant": v_idx if multi else None,
                     "theme_hints": hints,
@@ -184,6 +190,20 @@ def ingest(raw_dir: Path, manifest_path: Path, verbose: bool = False) -> dict:
         n = sum(1 for a in assets if a["category"] == cat)
         flag = "  <-- EMPTY" if n == 0 else ""
         print(f"  {cat:<14} {n:>4}{flag}")
+
+    tris = [a["triangles"] for a in assets if a.get("triangles")]
+    if tris:
+        tris_sorted = sorted(tris)
+        print(f"\nPolygon counts (triangles per model):")
+        print(f"  median   {tris_sorted[len(tris_sorted) // 2]:>7,}")
+        print(f"  mean     {int(sum(tris) / len(tris)):>7,}")
+        print(f"  smallest {min(tris):>7,}")
+        print(f"  largest  {max(tris):>7,}")
+        heavy = sorted(assets, key=lambda a: a.get("triangles") or 0,
+                       reverse=True)[:3]
+        print("  heaviest models:")
+        for a in heavy:
+            print(f"    {a['name'][:34]:<34} {a['triangles']:>7,}")
 
     n_modular = sum(1 for a in assets if a.get("modular"))
     if n_modular:

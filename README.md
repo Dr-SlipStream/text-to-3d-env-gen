@@ -56,11 +56,15 @@ The pipeline works without the LLM too (keyword fallback), so you can develop an
 python -m src.cli "a dense forest camp at night" --fallback
 ```
 
-Once the asset library is built, resolve objects to real 3D models:
+Once the asset library is built, generate a full 3D scene:
 
 ```bash
-python -m src.cli "a foggy medieval village at dusk" --resolve
+python scripts/generate.py "a foggy medieval village at dusk" --open
 ```
+
+That writes `outputs/<name>/` containing `scene.glb` (open in Blender, Unity or
+anything that reads glTF) and `index.html` (a real-time viewer with
+time-of-day lighting, weather fog and shadows).
 
 ## Project layout
 
@@ -74,8 +78,17 @@ src/
   asset_rules.py            filename cleaning + category classification
   asset_index.py            stage 2: embedding + vector search over assets
   asset_resolution.py       stage 2: SceneSpec → concrete 3D models
+  terrain.py                stage 3: heightmap generation + height/slope queries
+  layout.py                 stage 3: object placement, collision avoidance
+  dressing.py               stage 3: fills the world with background detail
+  appearance.py             real-world scaling + colour palette
+  export_gltf.py            stage 5: bake everything into one .glb (fallback)
+  export_scene.py           stage 5: keep each asset's own materials (default)
+  viewer.py                 stage 5: three.js viewer with lighting/fog/shadows
   cli.py                    command-line entry point
 scripts/
+  generate.py               end to end: prompt → viewable 3D scene
+  evaluate.py               consistency metrics across a suite of prompts
   ingest_assets.py          scans downloaded packs → manifest.json
   inspect_library.py        what's actually in the library, and what isn't
 tests/                      pytest suite (runs without a GPU or LLM)
@@ -85,6 +98,7 @@ docs/
   SETUP.md                  getting the project running
   ASSETS.md                 building the 3D asset library
   WALKTHROUGH.md            full explanation of what's built and why
+  DEMO.md                   demo runbook: what to run, what to say
 ```
 
 ### The Scene Specification
@@ -111,12 +125,31 @@ To add a new theme, object type or mood, edit `src/vocab.py` — never hardcode 
 |---|---|---|
 | 1 | Repo scaffold, scene schema, prompt decomposition | ✅ Done |
 | 2 | Asset library curation + retrieval index | ✅ Done |
-| 3 | Terrain generation + procedural layout engine | ⬜ |
+| 3 | Terrain generation + procedural layout engine | ✅ Done |
 | 4 | Playtest agent + gameplay-flow scoring *(novelty)* | ⬜ |
 | 5 | Unity integration: collision, navmesh, import | ⬜ |
-| 6 | Lighting/atmosphere + scene export | ⬜ |
+| 6 | Lighting/atmosphere + scene export | ✅ Done (early) |
 | 7 | Preview UI + iterative refinement | ⬜ |
 | 8 | Evaluation metrics + final report | ⬜ |
+
+## Measured behaviour
+
+```bash
+python scripts/evaluate.py --weak
+```
+
+26 prompts spanning all four themes, awkward paraphrases, and deliberately
+out-of-scope requests:
+
+| Metric | Result |
+|---|---|
+| Structurally valid | 26/26 |
+| Prompt coverage | 100% |
+| Retrieval confidence | 0.80 - 0.91 |
+| Density spread across themes | 1.6x |
+
+`--weak` lists the queries retrieval handled badly, which doubles as a list of
+what the asset library is missing.
 
 ## Testing
 

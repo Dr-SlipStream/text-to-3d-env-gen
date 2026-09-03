@@ -140,6 +140,7 @@ OBJECT_CATEGORIES = [
 PLACEMENT_RULES = [
     "along_path",   # lined up either side of the main path/road
     "cluster",      # grouped together around a point
+    "clump",        # several patches, as vegetation actually grows
     "scatter",      # spread randomly across open terrain
     "perimeter",    # around the outer edge of the scene
     "center",       # at/near the middle, a focal point
