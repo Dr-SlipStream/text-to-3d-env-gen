@@ -91,7 +91,47 @@ interchange format, so the same file opens in Unity, Unreal or Blender.
 
 Then open the result.
 
-## 4. The before/after (30 seconds)
+## 4. The Unity import (60 seconds)
+
+This is the part your teacher asked for specifically.
+
+Have Unity already open with an empty scene, **and glTFast already installed**
+— without it Unity refuses the drop outright with a "no entry" cursor, because
+it doesn't recognise `.glb` as an importable type. Generate
+straight into the project — no dragging across windows, which is where imports
+usually go wrong:
+
+```powershell
+python scripts/generate.py "a medieval village on a sunny day" `
+    --size large --seed 7 --palette --unity-project "C:\path\to\project"
+```
+
+Switch to Unity; it imports on its own. Then drag the imported `scene.glb`
+from **Project** into the **Hierarchy**.
+
+> "This is a standard glTF file. Unity's own importer reads it directly — no
+> conversion step, no plugin we wrote, no manual fixing. We export glTF rather
+> than a Unity-specific format precisely so the pipeline isn't tied to one
+> engine; the same file opens in Unreal or Blender."
+
+**Then light it:** Tools → Generated Scene → Apply Lighting... → pick
+`lighting.json` from the same folder. The scene goes from flat default
+lighting to the night sky, fog and campfire glow the browser shows.
+
+> "glTF is a geometry format — it deliberately doesn't carry lighting, because
+> every engine does it differently. We export the lighting as data alongside
+> the model, from the same source the browser preview uses."
+
+If there's time, show Route B — **Tools → Generated Scene → Import from
+manifest...** — which rebuilds the scene as separate objects sharing meshes,
+with colliders and static batching. That's how a level is actually authored.
+
+> "Each model is stored once and referenced by every instance. That's the
+> difference between exporting a picture of a level and exporting a level."
+
+Full instructions: `docs/UNITY.md`.
+
+## 5. The before/after (30 seconds)
 
 Show `outputs_bare` beside the normal output.
 
@@ -99,7 +139,7 @@ Show `outputs_bare` beside the normal output.
 > mostly the things nobody thinks to say — grass, pebbles, fence posts,
 > lanterns at dusk. Thirty-five objects versus two thousand."
 
-## 5. What's measured, not claimed (30 seconds)
+## 6. What's measured, not claimed (30 seconds)
 
 ```powershell
 python scripts/evaluate.py --fallback --weak
@@ -118,7 +158,7 @@ python scripts/evaluate.py --fallback --weak
 > deliberately out-of-scope requests. Every one produces a structurally valid
 > scene."
 
-## 6. What's novel (45 seconds)
+## 7. What's novel (45 seconds)
 
 > "Published systems in this space — including Tencent's WorldClaw this year —
 > generate environments optimised to *look* coherent. None optimise for
@@ -128,7 +168,7 @@ python scripts/evaluate.py --fallback --weak
 > of interest are spaced. The best-scoring layout wins. That scoring step is
 > our contribution and the subject of the research paper."
 
-## 7. Own the limitations (30 seconds)
+## 8. Own the limitations (30 seconds)
 
 Say these before you're asked. They're the strongest part of the presentation.
 
@@ -205,6 +245,13 @@ Say these before you're asked. They're the strongest part of the presentation.
 | `inspect_library.py` | "What is actually in my library?" Built to debug a bad result — see below. |
 | `inspect_scene.py` | "What is actually in this scene?" Reports the largest objects and each model's colour. |
 | `evaluate.py` | Runs 26 prompts and reports validity, coverage, confidence, density and timing. The source of every number quoted above. |
+
+## Engine integration
+
+| File | What it does |
+|---|---|
+| `engine/unity/Editor/GeneratedSceneImporter.cs` | Unity editor script. Reads `scene_manifest.json` and rebuilds the scene as shared-mesh instances with colliders and static batching. |
+| `docs/UNITY.md` | Unity setup, both import routes, and what makes the export clean. |
 
 ## Documentation
 
@@ -343,6 +390,7 @@ watching for crashes.
 | `--check` says NOT REACHABLE | `ollama serve` in another terminal, or add `--fallback` |
 | Generation is slow | Use a pre-generated scene; the model is loading into VRAM |
 | Viewer shows "Could not load" | It needs HTTP, not `file://`. Use `python -m http.server` |
+| Unity refuses the drop, "no entry" cursor | glTFast isn't installed in that project. Package Manager → + → Add by name → `com.unity.cloud.gltfast` |
 | Scene looks sparse | Wrong folder — check you're serving `outputs`, not `outputs_bare` |
 | Colours look wrong | Regenerate with `--palette` |
 | Laptop struggles | Add `--density 0.8` |

@@ -30,7 +30,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import trimesh
 
-from .export_gltf import build_terrain_mesh
+from .export_gltf import build_terrain_mesh, ensure_pbr_material
 from .layout import PlacedScene
 
 # Formats a browser can load directly. Anything else is converted on the way
@@ -93,6 +93,7 @@ def _prepare_asset(src: Path, dest_dir: Path,
                 mesh=mesh,
                 vertex_colors=_palette_colours(mesh, name, category, str(src)))
             mesh.export(dest)
+            ensure_pbr_material(dest)
         elif suffix in WEB_READY:
             shutil.copyfile(src, dest)
             mesh = trimesh.load(src, force="mesh", process=False)
@@ -102,6 +103,7 @@ def _prepare_asset(src: Path, dest_dir: Path,
                 cache[key] = None
                 return None
             mesh.export(dest)
+            ensure_pbr_material(dest)
 
         if mesh is None or not hasattr(mesh, "bounds") or mesh.bounds is None:
             base_offset, triangles = 0.0, 0
@@ -142,6 +144,7 @@ def export_instanced(scene: PlacedScene, out_dir: Path,
             path=scene.path, centre=scene.centre,
             core_radius=scene.core_radius)
         ground.export(out_dir / "terrain.glb")
+        ensure_pbr_material(out_dir / "terrain.glb")
         terrain_tris = len(ground.faces)
 
     # -- assets -----------------------------------------------------------

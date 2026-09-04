@@ -93,12 +93,14 @@ scripts/
   inspect_library.py        what's actually in the library, and what isn't
 tests/                      pytest suite (runs without a GPU or LLM)
 data/asset_library/         3D assets (downloaded, not committed)
-engine/unity_project/       Unity scene assembly and export
+engine/unity/Editor/        Unity editor script that rebuilds a scene
+                            from its manifest
 docs/
   SETUP.md                  getting the project running
   ASSETS.md                 building the 3D asset library
   WALKTHROUGH.md            full explanation of what's built and why
   DEMO.md                   demo runbook: what to run, what to say
+  UNITY.md                  importing a generated scene into Unity
 ```
 
 ### The Scene Specification

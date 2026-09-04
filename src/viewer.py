@@ -444,6 +444,60 @@ addEventListener('resize', () => {
 """
 
 
+def lighting_config(scene) -> dict:
+    """The scene's lighting, as data rather than as viewer JavaScript.
+
+    glTF carries geometry and materials but has no concept of fog, ambient
+    light or exposure, so a scene imported into an engine arrives lit by
+    whatever that project's defaults happen to be. Writing the lighting out
+    separately lets the engine reproduce what the browser shows, from the same
+    source of truth.
+    """
+    spec = scene.spec
+    tod = spec.lighting.time_of_day if spec else "day"
+    weather = spec.lighting.weather if spec else "clear"
+    mood = spec.lighting.mood if spec else "peaceful"
+
+    light = LIGHTING.get(tod, LIGHTING["day"])
+    fog = WEATHER_FOG.get(weather, WEATHER_FOG["clear"])
+
+    terrain = scene.terrain
+    size = terrain.size if terrain is not None else 120.0
+
+    density = fog["k"] / size
+    if tod == "night":
+        density *= 1.15
+
+    # Positions of every torch, lantern and campfire, so an engine can put
+    # real lights there rather than leaving them as unlit props.
+    lamps = [[round(v, 2) for v in i.position]
+             for i in scene.instances if i.category == "light_source"]
+
+    return {
+        "time_of_day": tod,
+        "weather": weather,
+        "mood": mood,
+        "scene_size": size,
+        "sun_colour": _desaturate(light["sun"], 0.25),
+        "sun_intensity": light["intensity"],
+        "sun_elevation_deg": light["elevation"],
+        "sun_azimuth_deg": 63.0,
+        "ambient_sky": _desaturate(light["sky_top"]),
+        "ambient_ground": _desaturate(light["ambient"], 0.45),
+        "ambient_intensity": light["ambient_i"],
+        "fog_colour": fog["colour"] or light["sky_bottom"],
+        "fog_density": round(density, 6),
+        "exposure": round(MOOD_EXPOSURE.get(mood, 1.0)
+                          * TIME_EXPOSURE.get(tod, 1.0), 3),
+        "lamps_emit": tod in ("night", "dusk"),
+        "lamp_colour": "#ffb265",
+        "lamp_intensity": 45.0 if tod == "night" else 22.0,
+        "lamp_range": 22.0,
+        "max_lamps": 14 if tod == "night" else 8,
+        "lamp_positions": lamps,
+    }
+
+
 def write_viewer(scene, out_dir: Path,
                  manifest_file: str = "scene_manifest.json",
                  title: str = "Generated Environment") -> Path:

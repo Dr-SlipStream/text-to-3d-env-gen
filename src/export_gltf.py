@@ -382,6 +382,7 @@ def export_glb(scene: PlacedScene, out_path: Path,
         placed += 1
 
     gltf_scene.export(out_path)
+    ensure_pbr_material(out_path)
 
     return {
         "file": str(out_path),
@@ -394,3 +395,60 @@ def export_glb(scene: PlacedScene, out_path: Path,
         "instance_triangles": instance_tris,
         "total_triangles": terrain_tris + instance_tris,
     }
+
+
+def ensure_pbr_material(glb_path: Path, roughness: float = 0.9) -> bool:
+    """Give an exported .glb an explicit, sane material.
+
+    trimesh writes vertex colours but no material block. The glTF default
+    material is metallic 1.0 / rough 1.0, which renders as dark metal in any
+    engine without an environment map -- our web viewer overrides it in code,
+    but Unity has no reason to, so an imported scene would come in black.
+
+    Writing an explicit non-metallic material makes the file look correct
+    everywhere, which is the point of exporting a standard format.
+    """
+    import json as _json
+    import struct as _struct
+
+    glb_path = Path(glb_path)
+    try:
+        data = glb_path.read_bytes()
+        if data[:4] != b"glTF":
+            return False
+
+        json_len = _struct.unpack("<I", data[12:16])[0]
+        json_bytes = data[20:20 + json_len]
+        rest = data[20 + json_len:]
+        gltf = _json.loads(json_bytes)
+
+        if gltf.get("materials"):
+            return False                      # already has one; leave it
+
+        gltf["materials"] = [{
+            "name": "generated",
+            "doubleSided": False,
+            "pbrMetallicRoughness": {
+                "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+                "metallicFactor": 0.0,
+                "roughnessFactor": roughness,
+            },
+        }]
+        for mesh in gltf.get("meshes", []):
+            for primitive in mesh.get("primitives", []):
+                primitive.setdefault("material", 0)
+
+        new_json = _json.dumps(gltf, separators=(",", ":")).encode("utf-8")
+        # Chunks must be 4-byte aligned; JSON pads with spaces.
+        pad = (4 - len(new_json) % 4) % 4
+        new_json += b" " * pad
+
+        header = bytearray(data[:12])
+        chunk = _struct.pack("<I", len(new_json)) + b"JSON" + new_json
+        total = 12 + len(chunk) + len(rest)
+        header[8:12] = _struct.pack("<I", total)
+
+        glb_path.write_bytes(bytes(header) + chunk + rest)
+        return True
+    except Exception:
+        return False
