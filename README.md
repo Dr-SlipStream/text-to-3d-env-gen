@@ -101,6 +101,7 @@ docs/
   WALKTHROUGH.md            full explanation of what's built and why
   DEMO.md                   demo runbook: what to run, what to say
   UNITY.md                  importing a generated scene into Unity
+  TECHNICAL_REFERENCE.md    full technical explanation, for exams and vivas
 ```
 
 ### The Scene Specification
