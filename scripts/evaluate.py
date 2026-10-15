@@ -93,13 +93,39 @@ STRESS_SUITE = [
     "asdfgh qwerty zxcvb",                # nonsense
 ]
 
+# Places outside the four settings the system started with. These used to
+# collapse to "a medieval village on grass"; they are the test of whether it
+# handles a prompt it was not built around.
+BREADTH_SUITE = [
+    "a snowy mountain village in winter",
+    "a frozen outpost on the tundra at night",
+    "a fishing harbour town on the coast",
+    "a pirate cove with boats on the beach",
+    "a tropical beach camp at sunset",
+    "a witch's hut in a foggy swamp",
+    "a bayou settlement on stilts at dusk",
+    "a ruined castle on a hill",
+    "a farm with fields beside a river",
+    "a graveyard at night beside a chapel",
+    "a monastery on a hilltop above a valley",
+    "a lumber camp by a lake in the mountains",
+    "a mining outpost in a rocky canyon",
+    "a volcanic wasteland with an abandoned base",
+    "a quiet meadow with a single cottage",
+    "a market square in a busy town",
+]
+
 SUITES = {
+    "breadth": BREADTH_SUITE,
     "core": CORE_SUITE,
     "features": FEATURE_SUITE,
     "stretch": STRETCH_SUITE,
     "stress": STRESS_SUITE,
     "all": CORE_SUITE + FEATURE_SUITE + STRETCH_SUITE + STRESS_SUITE,
 }
+
+
+GRAPH_MODE = False
 
 
 def evaluate_prompt(prompt: str, index: AssetIndex, seed: int,
@@ -123,7 +149,22 @@ def evaluate_prompt(prompt: str, index: AssetIndex, seed: int,
         resolved = resolve_scene(spec, index)
         terrain = Terrain.from_spec(spec, seed=seed)
         terrain.apply_features(spec.features, seed=seed)
-        placed = layout_scene(resolved, terrain, seed=seed)
+        if GRAPH_MODE:
+            # The relational path: graph -> dressing -> solver.
+            from src.graph_builder import build_graph
+            from src.graph_dressing import dress as dress_graph
+            from src.graph_pipeline import build_scene
+            graph, _src = build_graph(prompt, spec, client=client,
+                                      force_fallback=fallback,
+                                      size_metres=size)
+            dress_graph(graph, spec, size, density=max(density, 0.0))
+            placed = build_scene(graph, terrain, index, spec=spec, seed=seed)
+            row["_graph_skipped"] = [w for w in placed.warnings
+                                     if w.startswith("skipped")]
+        else:
+            placed = layout_scene(resolved, terrain, seed=seed)
+            from src.crossings import add_bridge_instances
+            add_bridge_instances(placed, index, theme=spec.theme)
         report = validate(placed)
 
         threshold = LOW_CONFIDENCE_BY_EMBEDDER.get(
@@ -170,6 +211,9 @@ def evaluate_prompt(prompt: str, index: AssetIndex, seed: int,
                              if i.category == "building"),
             "skipped": placed.skipped,
             "valid": report["valid"],
+            "connected": report.get("connected"),
+            "bridges": sum(1 for i in placed.instances
+                           if getattr(i, "role", "") == "bridge"),
             "overlaps": report["overlaps"],
             "floating": report["floating"],
             "off_terrain": report["off_terrain"],
@@ -190,18 +234,20 @@ def evaluate_prompt(prompt: str, index: AssetIndex, seed: int,
 
 
 def print_table(rows: list) -> None:
-    print(f"\n{'prompt':<42}{'theme':<17}{'features':<14}{'inst':>6}"
-          f"{'cov':>6}{'conf':>7}{'valid':>7}{'sec':>6}")
-    print("-" * 105)
+    print(f"\n{'prompt':<42}{'theme':<17}{'terrain':<14}{'features':<14}"
+          f"{'inst':>6}{'cov':>6}{'conf':>7}{'valid':>7}{'conn':>6}{'sec':>6}")
+    print("-" * 125)
     for r in rows:
         if r.get("error"):
             print(f"{r['prompt'][:43]:<44}{'ERROR':<18}{r['error'][:40]}")
             continue
         flag = "ok" if r["valid"] else "FAIL"
-        print(f"{r['prompt'][:41]:<42}{r['theme']:<17}"
+        conn = {True: "yes", False: "NO"}.get(r.get("connected"), "-")
+        print(f"{r['prompt'][:41]:<42}{r['theme'][:16]:<17}"
+              f"{r.get('terrain', '-')[:13]:<14}"
               f"{r.get('features', '-')[:13]:<14}{r['instances']:>6}"
               f"{r['coverage_pct']:>5}%{r['mean_conf']:>7.2f}"
-              f"{flag:>7}{r['total_s']:>6.1f}")
+              f"{flag:>7}{conn:>6}{r['total_s']:>6.1f}")
 
 
 def report_weak(rows: list, limit: int = 30) -> None:
@@ -267,6 +313,13 @@ def summarise(rows: list) -> None:
               f"{statistics.median(series):>10.2f}{max(series):>10.2f}")
 
     print(f"\nstructurally valid: {valid}/{len(ok)}")
+    connected = sum(1 for r in ok if r.get("connected"))
+    print(f"start-to-end walkable: {connected}/{len(ok)}"
+          f"   bridges placed: {sum(r.get('bridges', 0) for r in ok)}")
+    skipped = sorted({w.split("'")[1] for r in ok
+                      for w in r.get("_graph_skipped", []) if "'" in w})
+    if skipped:
+        print(f"left out (nothing like it in the library): {', '.join(skipped)}")
     errors = [r for r in rows if r.get("error")]
     if errors:
         print(f"errored: {len(errors)}")
@@ -295,10 +348,17 @@ def main() -> int:
     p.add_argument("--csv", type=Path, help="write full results here")
     p.add_argument("--weak", action="store_true",
                    help="list the queries retrieval handled badly")
+    p.add_argument("--manifest", type=Path,
+                   help="asset manifest to use (default: the built library)")
+    p.add_argument("--graph", action="store_true",
+                   help="evaluate the scene-graph path instead of the flat one")
     args = p.parse_args()
+    global GRAPH_MODE
+    GRAPH_MODE = args.graph
 
     try:
-        index = AssetIndex.from_manifest()
+        index = (AssetIndex.from_manifest(args.manifest) if args.manifest
+                 else AssetIndex.from_manifest())
     except FileNotFoundError as e:
         print(e)
         return 1

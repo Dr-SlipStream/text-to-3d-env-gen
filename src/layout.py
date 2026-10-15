@@ -86,6 +86,10 @@ class PlacedInstance:
     scale: float
     radius: float                            # footprint after scaling
     triangles: int = 0
+    # Special objects placed by a relationship rather than scattered: a
+    # bridge sits on the road and over water by design, so the usual
+    # "not on the path" and "resting on the ground" checks don't apply.
+    role: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -97,6 +101,7 @@ class PlacedInstance:
             "rotation_y": round(self.rotation_y, 4),
             "scale": round(self.scale, 3),
             "radius": round(self.radius, 3),
+            **({"role": self.role} if self.role else {}),
             "triangles": self.triangles,
         }
 
@@ -411,21 +416,17 @@ def layout_scene(resolved: ResolvedScene, terrain: Terrain,
 
     scene = PlacedScene(terrain=terrain, spec=resolved.spec, seed=seed)
 
-    # Try a few routes and keep the one that spends least time in water. A
-    # road running along a riverbed reads as a mistake; crossing one briefly
-    # reads as a ford.
-    best_path, best_wet = None, None
-    for _ in range(6):
-        candidate = generate_path(size, rng)
-        if terrain.features is None or not terrain.features.has_water:
-            best_path = candidate
-            break
-        wet = sum(1 for x, z in candidate if terrain.is_water(x, z))
-        if best_wet is None or wet < best_wet:
-            best_path, best_wet = candidate, wet
-        if wet == 0:
-            break
+    # Try several routes and keep the one that crosses water most cleanly:
+    # one short bridge, not a road running down the riverbed.
+    from .crossings import choose_road
+    best_path = choose_road(terrain, size, rng, generate_path)
     scene.path = best_path
+
+    # Wherever the road still has to cross water, record a bridge so the far
+    # bank stays reachable. The model itself is placed later, once assets are
+    # available.
+    from .crossings import plan_crossings
+    plan_crossings(terrain, scene.path)
 
     # Grade the road before anything is placed, so objects sit on the final
     # surface rather than the pre-graded one.
@@ -586,9 +587,22 @@ def layout_scene(resolved: ResolvedScene, terrain: Terrain,
 # Validation -- the requirements above, checked rather than assumed
 # ---------------------------------------------------------------------------
 
+def path_is_walkable(scene, resolution: int = 40) -> bool:
+    """Whether a character can walk from one end of the road to the other.
+
+    Uses the same walkability grid the RL agents train on, so "valid" here
+    and "reachable" for an agent mean the same thing.
+    """
+    from .rl.gridworld import env_from_scene
+
+    env = env_from_scene(scene, resolution=resolution)
+    return env.shortest_path_length() is not None
+
+
 def validate(scene: PlacedScene) -> dict:
     """Verify the three hard requirements. Used in tests and reported metrics."""
-    issues = {"overlaps": [], "off_terrain": [], "floating": [], "on_path": []}
+    issues = {"overlaps": [], "off_terrain": [], "floating": [], "on_path": [],
+              "unreachable": []}
     size = scene.terrain.size if scene.terrain else 0
 
     for i, a in enumerate(scene.instances):
@@ -596,6 +610,10 @@ def validate(scene: PlacedScene) -> dict:
 
         if not (0 <= ax <= size and 0 <= az <= size):
             issues["off_terrain"].append(a.name)
+
+        if a.role == "bridge":
+            # On the road and over water on purpose.
+            continue
 
         if scene.terrain:
             expected = scene.terrain.height_at(ax, az)
@@ -606,12 +624,24 @@ def validate(scene: PlacedScene) -> dict:
             issues["on_path"].append(a.name)
 
         for b in scene.instances[i + 1:]:
+            if b.role == "bridge":
+                continue
             bx, _, bz = b.position
             if (ax - bx) ** 2 + (az - bz) ** 2 < (a.radius + b.radius) ** 2 * 0.81:
                 issues["overlaps"].append((a.name, b.name))
 
+    # Connectivity. Geometric checks alone passed a map that a river had cut
+    # in two -- nothing overlapped and nothing floated, but the far half could
+    # not be reached. Walking the map is the only way to find that out.
+    reachable = None
+    if scene.terrain is not None and scene.path and len(scene.path) > 1:
+        reachable = path_is_walkable(scene)
+        if not reachable:
+            issues["unreachable"].append("road end not reachable from start")
+
     return {
         "valid": all(len(v) == 0 for v in issues.values()),
+        "connected": reachable,
         "instance_count": len(scene.instances),
         **{k: len(v) for k, v in issues.items()},
         "details": issues,

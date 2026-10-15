@@ -160,7 +160,8 @@ def watery(index):
 def test_nothing_is_placed_in_water(watery):
     scene, terrain = watery
     drowned = [i.name for i in scene.instances
-               if terrain.is_water(i.position[0], i.position[2])]
+               if i.role != "bridge"
+               and terrain.is_water(i.position[0], i.position[2])]
     assert not drowned, f"{len(drowned)} objects in the water"
 
 

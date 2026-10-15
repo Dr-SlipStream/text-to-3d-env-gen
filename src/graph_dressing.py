@@ -66,6 +66,9 @@ GROUND_COVER = {
     "desert_sand": [("dry grass", 1.3), ("pebble", 1.2)],
     "rocky": [("pebble", 1.8), ("grass", 1.0)],
     "barren_rock": [("pebble", 2.2), ("grass", 0.4)],
+    "snow": [("pebble", 1.0), ("dry grass", 0.6)],
+    "swamp": [("grass", 3.4), ("fern plant", 1.4), ("mushroom", 0.4)],
+    "beach_sand": [("dry grass", 1.0), ("pebble", 0.8)],
 }
 DEFAULT_COVER = [("grass", 2.6), ("pebble", 0.6)]
 

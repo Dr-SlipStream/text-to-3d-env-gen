@@ -166,14 +166,38 @@ class RegionResolver:
                 line = None
                 radius = self.size * 0.1
                 centre = (self.size / 2, self.size / 2)
-                if features.rivers:
-                    line, half = features.rivers[0]
-                    line = np.asarray(line)
-                    radius = float(half)
-                    centre = tuple(line[len(line) // 2])
-                elif features.lakes:
-                    cx, cz, r = features.lakes[0]
-                    centre, radius = (cx, cz), r
+
+                # Match the region to the water it names, so "the sea" and
+                # "the river" in one graph don't both resolve to the river.
+                wanted = (region.feature or region.id or "").lower()
+                kinds = ["river", "lake", "coast"]
+                for kind in kinds:
+                    if kind in wanted or (kind == "coast" and any(
+                            w in wanted for w in ("sea", "ocean", "shore",
+                                                  "beach", "bay", "harbo"))):
+                        kinds.remove(kind)
+                        kinds.insert(0, kind)
+                        break
+
+                for kind in kinds:
+                    if kind == "river" and features.rivers:
+                        line, half = features.rivers[0]
+                        line = np.asarray(line)
+                        radius = float(half)
+                        centre = tuple(line[len(line) // 2])
+                        break
+                    if kind == "lake" and features.lakes:
+                        cx, cz, r = features.lakes[0]
+                        centre, radius = (cx, cz), r
+                        break
+                    if kind == "coast" and features.coasts:
+                        _edge, shore, _depth = features.coasts[0]
+                        # A coast is a line: the shoreline. "along" and
+                        # "on_shore_of" then sample beside it like a river.
+                        line = np.asarray(shore)
+                        radius = 3.0
+                        centre = tuple(line[len(line) // 2])
+                        break
                 self.resolved[region.id] = ResolvedRegion(
                     region=region, centre=centre, radius=radius,
                     line=line, mask=getattr(features, "water_mask", None))
@@ -433,7 +457,14 @@ def solve(graph: SceneGraph, terrain, radii: Dict[str, float],
     size = terrain.size
 
     scene = SolvedScene()
-    scene.path = list(path) if path else generate_path(size, rng)
+    from .crossings import choose_road
+    scene.path = (list(path) if path
+                  else choose_road(terrain, size, rng, generate_path))
+
+    # Record bridges where the road crosses water, before anything is placed,
+    # so placement and walkability both know the crossing is there.
+    from .crossings import plan_crossings
+    plan_crossings(terrain, scene.path)
 
     resolver = RegionResolver(graph, terrain, scene.path, rng)
     scene.regions = resolver.resolved

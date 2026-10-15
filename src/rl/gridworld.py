@@ -248,6 +248,9 @@ def walkability_from_scene(scene, resolution: int = 48,
         for c in range(resolution):
             x = (c + 0.5) * cell
             z = (r + 0.5) * cell
+            if terrain.on_bridge(x, z, margin=cell * 0.5):
+                # The deck spans the water and the steep banks either side.
+                continue
             if terrain.is_water(x, z, margin=cell * 0.4):
                 walkable[r, c] = False
             elif terrain.slope_at(x, z) > max_slope:
@@ -258,6 +261,8 @@ def walkability_from_scene(scene, resolution: int = 48,
     solid = {"building", "structure", "rock"}
     for inst in scene.instances:
         if inst.category not in solid:
+            continue
+        if getattr(inst, "role", "") == "bridge":
             continue
         if inst.radius < cell * 0.35:
             continue

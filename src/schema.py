@@ -225,6 +225,18 @@ class SceneSpec(BaseModel):
 
     @model_validator(mode="after")
     def _post(self):
+        # Ground the weather implies. A snowy village names a village, but it
+        # is not standing on grass.
+        implied = vocab.WEATHER_TERRAIN.get(self.lighting.weather)
+        if implied and self.terrain.type in ("grassland", "forest_floor"):
+            self.terrain.type = implied
+
+        # Features the ground brings with it: a swamp has standing water, a
+        # beach has a sea. Without them the biome is just a colour.
+        needed = vocab.BIOME_FEATURES.get(self.terrain.type)
+        if needed and not any(f.holds_water for f in self.features):
+            self.features.insert(0, TerrainFeature(type=needed))
+
         # Two of the same feature is almost always the model repeating itself,
         # and two rivers in a 120m scene would leave nowhere to build.
         seen_features = set()

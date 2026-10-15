@@ -71,6 +71,21 @@ PRESETS = {
         flat_bias=0.1,
         colour_low=(0.30, 0.26, 0.25), colour_high=(0.50, 0.45, 0.42),
         colour_dirt=(0.38, 0.32, 0.29)),
+    "snow": TerrainPreset(
+        amplitude=6.0, octaves=4, base_cells=4, persistence=0.5,
+        flat_bias=0.1,
+        colour_low=(0.80, 0.83, 0.88), colour_high=(0.95, 0.96, 0.98),
+        colour_dirt=(0.55, 0.52, 0.50)),
+    "swamp": TerrainPreset(
+        amplitude=2.2, octaves=4, base_cells=6, persistence=0.55,
+        flat_bias=0.35,
+        colour_low=(0.20, 0.24, 0.14), colour_high=(0.31, 0.35, 0.20),
+        colour_dirt=(0.29, 0.24, 0.17)),
+    "beach_sand": TerrainPreset(
+        amplitude=3.5, octaves=3, base_cells=3, persistence=0.45,
+        flat_bias=0.25,
+        colour_low=(0.80, 0.73, 0.55), colour_high=(0.62, 0.66, 0.40),
+        colour_dirt=(0.66, 0.57, 0.40)),
 }
 
 
@@ -345,6 +360,76 @@ class Terrain:
                                      else min(self.features.water_level, level))
         return cx, cz, radius
 
+    def carve_coast(self, rng, scale: float = 1.0) -> np.ndarray:
+        """Drop one edge of the map into the sea. Returns the shoreline.
+
+        The shoreline wanders, so it reads as coast rather than as the map
+        being cut off with a ruler. Land just behind it is lifted a little
+        above the water so the beach is dry: a flat water plane laid over
+        the sea would otherwise show through any natural dip near the shore.
+        """
+        edge = ["north", "south", "east", "west"][int(rng.integers(0, 4))]
+        depth = self.size * 0.26 * scale
+
+        # Distance from the chosen edge for every cell, and along it.
+        xx, zz = self._grid_coords()
+        if edge == "north":
+            across, along = zz, xx
+        elif edge == "south":
+            across, along = self.size - zz, xx
+        elif edge == "west":
+            across, along = xx, zz
+        else:
+            across, along = self.size - xx, zz
+
+        # Wobble the shoreline with a few low-frequency waves.
+        phases = rng.uniform(0, 2 * np.pi, 3)
+        def shore_at(t):
+            return depth + self.size * 0.05 * (
+                np.sin(t / self.size * 2 * np.pi * 1.0 + phases[0])
+                + 0.6 * np.sin(t / self.size * 2 * np.pi * 2.3 + phases[1])
+                + 0.3 * np.sin(t / self.size * 2 * np.pi * 4.1 + phases[2]))
+
+        shore = shore_at(along)
+        lo, hi = float(self.heights.min()), float(self.heights.max())
+        level = lo + (hi - lo) * 0.25
+        bed = level - 3.0
+
+        # Sea side: down to the bed, deepening away from the shore.
+        sea = across < shore
+        w = np.clip((shore - across) / 8.0, 0.0, 1.0)
+        w = _smoothstep(w)
+        self.heights = np.where(sea, self.heights * (1 - w) + bed * w,
+                                self.heights)
+
+        # Beach: a dry strip that rises gently from the waterline.
+        beach_width = 10.0
+        land = (across >= shore) & (across < shore + beach_width)
+        rise = level + 0.25 + (across - shore) * 0.12
+        self.heights = np.where(land, np.maximum(self.heights, rise),
+                                self.heights)
+
+        if self.features is None:
+            self.features = TerrainFeatures(self.res)
+        self.features.water_mask |= across < shore - 0.5
+
+        samples = np.linspace(0, self.size, 48)
+        if edge in ("north", "south"):
+            zs = shore_at(samples)
+            if edge == "south":
+                zs = self.size - zs
+            line = np.column_stack([samples, zs])
+        else:
+            xs = shore_at(samples)
+            if edge == "east":
+                xs = self.size - xs
+            line = np.column_stack([xs, samples])
+
+        self.features.coasts.append((edge, line, depth))
+        self.features.water_level = (level if self.features.water_level is None
+                                     else min(self.features.water_level, level))
+        return line
+
     def raise_hill(self, rng, scale: float = 1.0) -> tuple:
         """Raise a rounded rise and return (x, z, radius, height)."""
         radius = self.size * 0.20 * scale
@@ -404,11 +489,13 @@ class Terrain:
 
         rng = np.random.default_rng(seed + 4242)
         order = {"hill": 0, "valley": 1, "cliff": 2,
-                 "clearing": 3, "lake": 4, "river": 5}
+                 "clearing": 3, "coast": 4, "lake": 5, "river": 6}
         for feature in sorted(features, key=lambda f: order.get(f.type, 9)):
             scale = FEATURE_SCALE.get(feature.size, 1.0)
             if feature.type == "river":
                 self.carve_river(rng, scale)
+            elif feature.type == "coast":
+                self.carve_coast(rng, scale)
             elif feature.type == "lake":
                 self.carve_lake(rng, scale)
             elif feature.type == "hill":
@@ -426,6 +513,12 @@ class Terrain:
     @property
     def water_level(self) -> Optional[float]:
         return self.features.water_level if self.features else None
+
+    def on_bridge(self, x: float, z: float, margin: float = 0.0) -> bool:
+        """True if (x, z) is on a bridge deck."""
+        if self.features is None:
+            return False
+        return any(b.covers(x, z, margin) for b in self.features.bridges)
 
     def is_water(self, x: float, z: float, margin: float = 0.0) -> bool:
         """True if this position is water, or within `margin` metres of it.
@@ -552,6 +645,10 @@ class TerrainFeatures:
         self.lakes: List[tuple] = []          # (x, z, radius)
         self.hills: List[tuple] = []          # (x, z, radius, height)
         self.clearings: List[tuple] = []      # (x, z, radius)
+        # Each coast is (edge, shoreline points, depth from that edge).
+        self.coasts: List[tuple] = []
+        # Crossings where the road meets water; see crossings.py.
+        self.bridges: list = []
 
     @property
     def has_water(self) -> bool:
@@ -574,4 +671,9 @@ class TerrainFeatures:
             "lakes": [[round(v, 2) for v in lake] for lake in self.lakes],
             "hills": [[round(v, 2) for v in h] for h in self.hills],
             "clearings": [[round(v, 2) for v in c] for c in self.clearings],
+            "bridges": [b.to_dict() for b in self.bridges],
+            "coasts": [{"edge": edge,
+                        "shoreline": [[round(float(x), 2), round(float(z), 2)]
+                                      for x, z in line]}
+                       for edge, line, _ in self.coasts],
         }

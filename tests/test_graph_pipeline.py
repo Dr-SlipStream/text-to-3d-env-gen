@@ -166,8 +166,11 @@ def test_graph_scene_records_the_settlement(graph_scene):
 
 
 def test_nothing_in_the_water_on_the_graph_path(graph_scene):
+    """Nothing stands in the river -- except a bridge, which is meant to."""
     _, terrain, scene = graph_scene
     for inst in scene.instances:
+        if inst.role == "bridge":
+            continue
         assert not terrain.is_water(inst.position[0], inst.position[2])
 
 

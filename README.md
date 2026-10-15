@@ -107,6 +107,11 @@ src/
                             PlacedScene the exporter already understands
   graph_dressing.py         adds the things no description mentions:
                             ground cover, variation, consistent density
+  crossings.py              bridges where the road meets water, and the
+                            road choice that keeps crossings short
+  rl/                       navigation MDP built from a scene; Q-learning,
+                            SARSA and a random baseline that measure whether
+                            a generated place can actually be crossed
   layout.py                 stage 3: object placement, collision avoidance
                             (the original rule-based path, still the default)
   dressing.py               stage 3: fills the world with background detail
@@ -168,7 +173,15 @@ To add a new theme, object type or mood, edit `src/vocab.py` — never hardcode 
 
 ```bash
 python scripts/evaluate.py --weak
+python scripts/evaluate.py --suite breadth           # 16 places it wasn't built for
+python scripts/evaluate.py --suite breadth --graph   # same, through the scene graph
 ```
+
+The breadth suite (snowy villages, harbours, pirate coves, swamps, a volcanic
+wasteland, a graveyard…) reports the ground and water it chose, whether the
+road can be walked end to end (`conn`), how many bridge segments were laid,
+and which requested things were left out because the library has nothing like
+them.
 
 26 prompts spanning all four themes, awkward paraphrases, and deliberately
 out-of-scope requests:

@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.asset_index import AssetIndex                      # noqa: E402
 from src.asset_resolution import resolve_scene              # noqa: E402
+from src.crossings import add_bridge_instances              # noqa: E402
 from src.dressing import dress_spec                         # noqa: E402
 from src.graph_builder import build_graph                   # noqa: E402
 from src.graph_dressing import dress as dress_graph         # noqa: E402
@@ -174,7 +175,12 @@ def main() -> int:
         print(f"        valid={best_report['valid']} "
               f"overlaps={best_report['overlaps']} "
               f"floating={best_report['floating']} "
-              f"blocking-path={best_report['on_path']}")
+              f"blocking-path={best_report['on_path']} "
+              f"connected={best_report['connected']}")
+        bridges = sum(1 for i in placed.instances if i.role == "bridge")
+        if bridges:
+            print(f"        + {bridges} bridge(s) where the road crosses "
+                  "water")
         for w in placed.warnings:
             print(f"        ! {w}")
 
@@ -245,6 +251,7 @@ def main() -> int:
         t = Terrain.from_spec(spec, seed=seed + i)
         t.apply_features(spec.features, seed=seed + i)
         cand = layout_scene(resolved, t, seed=seed + i)
+        add_bridge_instances(cand, index, theme=spec.theme)
         report = validate(cand)
         score = len(cand.instances) - cand.skipped
         if best is None or score > (len(best.instances) - best.skipped):
@@ -258,7 +265,11 @@ def main() -> int:
     print(f"        valid={best_report['valid']} "
           f"overlaps={best_report['overlaps']} "
           f"floating={best_report['floating']} "
-          f"blocking-path={best_report['on_path']}")
+          f"blocking-path={best_report['on_path']}"
+          f" connected={best_report['connected']}")
+    bridges = sum(1 for i in placed.instances if i.role == "bridge")
+    if bridges:
+        print(f"        + {bridges} bridge(s) where the road crosses water")
     for w in placed.warnings:
         print(f"        ! {w}")
 

@@ -47,6 +47,11 @@ TERRAIN_TYPES = [
     "desert_sand",
     "rocky",
     "barren_rock",
+    # Added so prompts outside the original four settings land on ground
+    # that matches them, instead of all becoming grassland.
+    "snow",
+    "swamp",
+    "beach_sand",
 ]
 
 TERRAIN_KEYWORDS = {
@@ -56,8 +61,24 @@ TERRAIN_KEYWORDS = {
     # NB: deliberately excludes "stone" -- it's usually a material adjective
     # ("stone bridge"), not a description of the ground.
     "rocky": ["rocky", "mountain", "hilly", "cliff", "crag"],
-    "barren_rock": ["barren", "alien", "lunar", "crater", "wasteland"],
+    "barren_rock": ["barren", "alien", "lunar", "crater", "wasteland",
+                    "volcanic", "ash", "lava"],
+    "snow": ["snow", "snowy", "winter", "frozen", "ice", "icy", "tundra",
+             "arctic", "alpine", "blizzard", "glacier", "frost"],
+    "swamp": ["swamp", "marsh", "bog", "bayou", "wetland", "fen", "mire",
+              "swampy", "marshy"],
+    "beach_sand": ["beach", "coast", "coastal", "seaside", "shore",
+                   "tropical", "island", "cove", "lagoon", "harbour",
+                   "harbor", "port", "pier", "dock", "seaport"],
 }
+
+# Ground the prompt implies even when it names something else. A "snowy
+# village" names a village, but it is not standing on grass.
+WEATHER_TERRAIN = {"snow": "snow", "sandstorm": "desert_sand"}
+
+# Landscape features a kind of ground brings with it. A swamp without standing
+# water, or a beach without a sea, is just the wrong colour of field.
+BIOME_FEATURES = {"swamp": "lake", "beach_sand": "coast"}
 
 # Default terrain for each theme, used when the prompt doesn't specify one.
 THEME_DEFAULT_TERRAIN = {
@@ -77,12 +98,16 @@ TERRAIN_SIZES = ["small", "medium", "large"]
 # are landscape elements carved into the heightmap rather than objects placed on
 # it, and other things position themselves relative to them.
 # ---------------------------------------------------------------------------
-TERRAIN_FEATURES = ["river", "lake", "hill", "valley", "cliff", "clearing"]
+TERRAIN_FEATURES = ["river", "lake", "coast", "hill", "valley", "cliff",
+                    "clearing"]
 
 FEATURE_KEYWORDS = {
     "river": ["river", "stream", "creek", "brook", "waterway", "canal"],
     "lake": ["lake", "pond", "pool", "lagoon", "reservoir", "oasis",
              "waterhole", "tarn"],
+    "coast": ["sea", "ocean", "coast", "coastline", "beach", "seaside",
+              "shore", "shoreline", "cove", "bay", "harbour", "harbor",
+              "seafront", "pier", "dock", "docks", "port"],
     "hill": ["hill", "hilltop", "knoll", "rise", "mound", "ridge",
              "hillside", "highland"],
     "valley": ["valley", "vale", "gorge", "ravine", "basin", "hollow",
@@ -94,7 +119,7 @@ FEATURE_KEYWORDS = {
 
 # Features that hold water. Anything below the water line is submerged, so
 # placement has to treat it as unusable ground.
-WATER_FEATURES = {"river", "lake"}
+WATER_FEATURES = {"river", "lake", "coast"}
 
 FEATURE_SIZES = ["small", "medium", "large"]
 

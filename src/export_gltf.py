@@ -529,6 +529,42 @@ def _river_ribbon(line: np.ndarray, half_width: float, level: float,
             np.asarray(faces, dtype=np.int64))
 
 
+def _coast_strip(edge: str, line, level: float, size: float):
+    """The sea: a strip from the map edge to just past the shoreline.
+
+    It reaches a metre onto the beach on purpose. The beach rises above the
+    water there, so the overlap is hidden, and the alternative -- stopping
+    exactly at the line -- leaves a visible seam wherever the shoreline
+    sample points cut a corner.
+    """
+    pts = np.asarray(line, dtype=np.float64)
+    outer = pts.copy()
+    inner = pts.copy()
+    if edge == "north":
+        outer[:, 1] = 0.0
+        inner[:, 1] = np.minimum(pts[:, 1] + 1.0, size)
+    elif edge == "south":
+        outer[:, 1] = size
+        inner[:, 1] = np.maximum(pts[:, 1] - 1.0, 0.0)
+    elif edge == "west":
+        outer[:, 0] = 0.0
+        inner[:, 0] = np.minimum(pts[:, 0] + 1.0, size)
+    else:
+        outer[:, 0] = size
+        inner[:, 0] = np.maximum(pts[:, 0] - 1.0, 0.0)
+
+    n = len(pts)
+    verts = np.empty((n * 2, 3), dtype=np.float32)
+    verts[0::2, 0], verts[0::2, 2] = outer[:, 0], outer[:, 1]
+    verts[1::2, 0], verts[1::2, 2] = inner[:, 0], inner[:, 1]
+    verts[:, 1] = level
+
+    i = np.arange(n - 1) * 2
+    faces = np.vstack([np.column_stack([i, i + 1, i + 2]),
+                       np.column_stack([i + 1, i + 3, i + 2])])
+    return verts, faces
+
+
 def _lake_disc(cx: float, cz: float, radius: float, level: float,
                segments: int = 48):
     """A smooth circular surface for a lake."""
@@ -587,6 +623,12 @@ def build_water_mesh(terrain, inset: float = 0.0):
 
     for cx, cz, radius in features.lakes:
         verts, faces = _lake_disc(cx, cz, max(radius - inset, 1.0), level)
+        all_verts.append(verts)
+        all_faces.append(faces + offset)
+        offset += len(verts)
+
+    for edge, line, _depth in getattr(features, "coasts", []):
+        verts, faces = _coast_strip(edge, line, level, terrain.size)
         all_verts.append(verts)
         all_faces.append(faces + offset)
         offset += len(verts)

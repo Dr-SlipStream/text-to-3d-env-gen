@@ -75,7 +75,13 @@ RULES
   it is usually a focal point other things arrange around.
 - Always include a region for the surroundings (wilderness) and, where there
   is a settlement or camp, a region for it.
-- Include a water region only if the description mentions water.
+- Include a water region only if the description mentions water. Give it an
+  id that says which water it is: "river", "lake", or "sea" for a coast,
+  harbour, beach or cove.
+- Describe the place the prompt asks for, whatever it is -- a harbour, a
+  snowbound pass, a swamp, a temple garden. Name assets plainly ("boat",
+  "pier", "pine tree", "lantern"); if the library lacks one it is skipped and
+  reported, so prefer common objects over exotic ones.
 - Between 5 and 14 groups. Populate the place so it feels complete: describe
   what a prompt implies, not only what it names. A camp has tents, a fire,
   seating, stored gear, a woodpile, drying racks, and woodland around it.
@@ -289,6 +295,14 @@ def compile_graph(spec) -> SceneGraph:
 
         groups.append(Group(id=gid, asset=obj.name, count=obj.quantity,
                             relations=relations))
+
+    # A coast is a working edge as well as scenery: boats drawn up on the
+    # shore and a pier into the water say "harbour" more than any building.
+    if any(r.feature == "coast" for r in regions):
+        sea = next(r.id for r in regions if r.feature == "coast")
+        groups.append(Group(
+            id=unique("boats"), asset="boat", count=4,
+            relations=[Relation(kind="on_shore_of", target=sea, distance=4)]))
 
     # Water earns a little life of its own, so a river is not just an
     # obstacle everything keeps away from.

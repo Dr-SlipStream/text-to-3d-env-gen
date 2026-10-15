@@ -52,6 +52,11 @@ class ResolvedGroup:
                                     self.match.height)
 
 
+# Fraction of the low-confidence threshold below which a group is skipped
+# rather than placed with the wrong model.
+SKIP_FRACTION = 0.65
+
+
 def resolve_groups(graph: SceneGraph, index: AssetIndex,
                    theme: Optional[str] = None) -> Tuple[Dict, List[str]]:
     """Bind every group in the graph to a real model.
@@ -78,6 +83,17 @@ def resolve_groups(graph: SceneGraph, index: AssetIndex,
         if match is None:
             warnings.append(f"{group.id}: no model found for "
                             f"{group.asset!r}")
+            continue
+
+        # Below a hard floor the match is not a substitute, it is a
+        # different object: a "well" becoming a metal wall panel at 0.16, a
+        # "barn" becoming an archery range. For an open-ended prompt that is
+        # worse than leaving the thing out, so the group is dropped and
+        # reported -- the report is the list of what the library is missing.
+        if match.score < threshold * SKIP_FRACTION:
+            warnings.append(
+                f"skipped {group.asset!r}: nothing like it in the library "
+                f"(closest '{match.name}', {match.score:.2f})")
             continue
 
         if match.score < threshold:
@@ -133,6 +149,9 @@ def build_scene(graph: SceneGraph, terrain, index: AssetIndex,
             radius=item.radius,
             triangles=int(rg.match.asset.get("triangles") or 0),
         ))
+
+    from .crossings import add_bridge_instances
+    add_bridge_instances(scene, index, theme=theme)
 
     return scene
 

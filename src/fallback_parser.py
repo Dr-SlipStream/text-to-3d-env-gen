@@ -159,6 +159,12 @@ def parse(prompt: str) -> SceneSpec:
     terrain_type = _find(
         text, vocab.TERRAIN_KEYWORDS, vocab.THEME_DEFAULT_TERRAIN[theme]
     )
+    # "Sand" alone is ambiguous: a sandy beach is not a desert. Unless the
+    # prompt says desert outright, sand beside a sea word means beach.
+    if (terrain_type == "desert_sand"
+            and not re.search(r"\b(desert|dunes?|arid)\b", text)
+            and any(w in text for w in vocab.TERRAIN_KEYWORDS["beach_sand"])):
+        terrain_type = "beach_sand"
     time_of_day = _find(text, vocab.TIME_KEYWORDS, "day")
     weather = _find(text, vocab.WEATHER_KEYWORDS, "clear")
     mood = _find(text, vocab.MOOD_KEYWORDS, "peaceful")
