@@ -88,6 +88,39 @@ class Lighting(BaseModel):
         return _snap(v, vocab.MOODS, "peaceful")
 
 
+class TerrainFeature(BaseModel):
+    """A landscape element carved into the ground, not placed on it.
+
+    Rivers, lakes, hills and valleys are shaped into the heightmap before any
+    object is positioned, because everything else has to respect them -- you
+    cannot build in a river, and vegetation crowds its banks.
+    """
+
+    type: str
+    size: str = "medium"
+
+    @field_validator("type")
+    @classmethod
+    def _v_type(cls, v):
+        # Resolve synonyms before snapping. "creek" and "stream" are rivers,
+        # "oasis" is a lake -- without this they fuzzy-match to whatever is
+        # closest by spelling, which turned a creek into a hill.
+        word = str(v).lower().strip()
+        for feature, words in vocab.FEATURE_KEYWORDS.items():
+            if word == feature or word in words:
+                return feature
+        return _snap(v, vocab.TERRAIN_FEATURES, "hill")
+
+    @field_validator("size")
+    @classmethod
+    def _v_size(cls, v):
+        return _snap(v, vocab.FEATURE_SIZES, "medium")
+
+    @property
+    def holds_water(self) -> bool:
+        return self.type in vocab.WATER_FEATURES
+
+
 class SceneObject(BaseModel):
     """One kind of object in the scene, plus how many of it to place."""
 
@@ -120,9 +153,24 @@ class SceneObject(BaseModel):
 
     @model_validator(mode="after")
     def _fill_placement(self):
-        # Correct categories the LLM commonly gets wrong ("forge" is a
-        # building, not a structure). Done here so every code path benefits.
-        corrected = vocab.override_category(self.name, self.category)
+        # Categorise the request with the same keyword table that categorises
+        # the assets. Retrieval searches within a category, so if the two
+        # disagree the search looks on the wrong shelf entirely: the model
+        # called a firepit a "structure" and it matched a metal wall, and
+        # called a log a "prop" and it matched a bed -- while the library held
+        # perfectly good campfires and logs the search never saw.
+        #
+        # Only overrides when a keyword actually matched. An unrecognised name
+        # keeps whatever the model chose, since we have nothing better.
+        from . import asset_rules
+
+        confident = asset_rules.classify_confident(self.name)
+        corrected = confident or self.category
+
+        # The explicit table still wins where the keyword rules are wrong --
+        # a forge matches "forge" under buildings, but "well" would otherwise
+        # land oddly.
+        corrected = vocab.override_category(self.name, corrected)
         if corrected != self.category:
             self.category = corrected
             self.placement = None      # re-derive from the corrected category
@@ -151,6 +199,7 @@ class SceneSpec(BaseModel):
     art_style: str = "low_poly"
     terrain: Terrain = Field(default_factory=Terrain)
     lighting: Lighting = Field(default_factory=Lighting)
+    features: List[TerrainFeature] = Field(default_factory=list)
     objects: List[SceneObject] = Field(default_factory=list)
 
     # Provenance / debugging -- never used for generation, but invaluable when
@@ -176,6 +225,16 @@ class SceneSpec(BaseModel):
 
     @model_validator(mode="after")
     def _post(self):
+        # Two of the same feature is almost always the model repeating itself,
+        # and two rivers in a 120m scene would leave nowhere to build.
+        seen_features = set()
+        unique = []
+        for f in self.features:
+            if f.type not in seen_features:
+                seen_features.add(f.type)
+                unique.append(f)
+        self.features = unique[:3]
+
         # Drop atmosphere and effects the LLM listed as objects. "smoke" has
         # no mesh; trying to place one always picks something wrong.
         physical = []
@@ -218,11 +277,20 @@ class SceneSpec(BaseModel):
     def from_json(cls, raw: str) -> "SceneSpec":
         return cls.model_validate(json.loads(raw))
 
+    @property
+    def has_water(self) -> bool:
+        return any(f.holds_water for f in self.features)
+
     def summary(self) -> str:
         """One-line human summary, handy for logs and demo output."""
         n = sum(o.quantity for o in self.objects)
+        feature_text = ""
+        if self.features:
+            feature_text = " | " + ", ".join(
+                f"{f.size} {f.type}" for f in self.features)
         return (
-            f"{self.theme} | {self.terrain.type} ({self.terrain.size}) | "
+            f"{self.theme} | {self.terrain.type} ({self.terrain.size})"
+            f"{feature_text} | "
             f"{self.lighting.time_of_day}/{self.lighting.weather}/"
             f"{self.lighting.mood} | {len(self.objects)} object types, "
             f"{n} instances"

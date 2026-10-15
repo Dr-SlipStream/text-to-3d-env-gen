@@ -361,6 +361,12 @@ def export_glb(scene: PlacedScene, out_path: Path,
         gltf_scene.add_geometry(ground, node_name="terrain",
                                 geom_name="terrain")
 
+        water = build_water_mesh(scene.terrain)
+        if water is not None:
+            terrain_tris += len(water.faces)
+            gltf_scene.add_geometry(water, node_name="water",
+                                    geom_name="water")
+
     placed = 0
     missing: List[str] = []
     instance_tris = 0
@@ -397,7 +403,8 @@ def export_glb(scene: PlacedScene, out_path: Path,
     }
 
 
-def ensure_pbr_material(glb_path: Path, roughness: float = 0.9) -> bool:
+def ensure_pbr_material(glb_path: Path, roughness: float = 0.9,
+                        double_sided: bool = False) -> bool:
     """Give an exported .glb an explicit, sane material.
 
     trimesh writes vertex colours but no material block. The glTF default
@@ -427,7 +434,7 @@ def ensure_pbr_material(glb_path: Path, roughness: float = 0.9) -> bool:
 
         gltf["materials"] = [{
             "name": "generated",
-            "doubleSided": False,
+            "doubleSided": bool(double_sided),
             "pbrMetallicRoughness": {
                 "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
                 "metallicFactor": 0.0,
@@ -452,3 +459,157 @@ def ensure_pbr_material(glb_path: Path, roughness: float = 0.9) -> bool:
         return True
     except Exception:
         return False
+
+
+# Water surface colour per terrain type -- a desert oasis and a forest pool
+# do not read the same.
+WATER_COLOURS = {
+    "grassland": (0.22, 0.42, 0.52),
+    "forest_floor": (0.16, 0.32, 0.36),
+    "desert_sand": (0.26, 0.50, 0.55),
+    "rocky": (0.20, 0.38, 0.48),
+    "barren_rock": (0.24, 0.40, 0.46),
+}
+
+
+def _river_ribbon(line: np.ndarray, half_width: float, level: float,
+                  size: float):
+    """A smooth strip following a river's centre-line.
+
+    Built as one rectangle per segment rather than as two continuous rails.
+    Shared rails look simpler but fold: the centre-line is piecewise linear,
+    so its direction changes abruptly at each joint, and with an 11m
+    half-width and points 2m apart the two rails cross at every bend. That
+    produced thin slivers and X-shaped folds instead of a river.
+
+    Each rectangle is perpendicular to its own segment and extended past both
+    ends, so consecutive quads overlap at the joints and cover them. Overlap
+    is invisible here because the whole surface is flat and at one height.
+    """
+    pts = np.asarray(line, dtype=np.float64)
+    if len(pts) < 2:
+        return None, None
+
+    # Drop points that are too close together to define a direction.
+    keep = [pts[0]]
+    for p in pts[1:]:
+        if np.hypot(*(p - keep[-1])) > max(half_width * 0.5, 1.0):
+            keep.append(p)
+    if not np.allclose(keep[-1], pts[-1]):
+        keep.append(pts[-1])
+    pts = np.asarray(keep)
+    if len(pts) < 2:
+        return None, None
+
+    verts, faces = [], []
+    for i in range(len(pts) - 1):
+        a, b = pts[i], pts[i + 1]
+        d = b - a
+        length = np.hypot(*d)
+        if length < 1e-6:
+            continue
+        d = d / length
+
+        # Extend past each end so the joints between segments are covered.
+        a = a - d * half_width
+        b = b + d * half_width
+        perp = np.array([-d[1], d[0]]) * half_width
+
+        corners = np.clip([a + perp, a - perp, b - perp, b + perp], 0, size)
+
+        base = len(verts)
+        for cx, cz in corners:
+            verts.append((cx, level, cz))
+        faces.append((base, base + 1, base + 2))
+        faces.append((base, base + 2, base + 3))
+
+    if not faces:
+        return None, None
+    return (np.asarray(verts, dtype=np.float32),
+            np.asarray(faces, dtype=np.int64))
+
+
+def _lake_disc(cx: float, cz: float, radius: float, level: float,
+               segments: int = 48):
+    """A smooth circular surface for a lake."""
+    angles = np.linspace(0, 2 * np.pi, segments, endpoint=False)
+    rim = np.column_stack([cx + np.cos(angles) * radius,
+                           cz + np.sin(angles) * radius])
+
+    verts = np.empty((segments + 1, 3), dtype=np.float32)
+    verts[0] = (cx, level, cz)
+    verts[1:, 0] = rim[:, 0]
+    verts[1:, 2] = rim[:, 1]
+    verts[:, 1] = level
+
+    idx = np.arange(segments)
+    faces = np.column_stack([
+        np.zeros(segments, dtype=int),
+        idx + 1,
+        (idx + 1) % segments + 1,
+    ])
+    return verts, faces
+
+
+def build_water_mesh(terrain, inset: float = 0.0):
+    """A flat surface covering the scene's rivers and lakes.
+
+    Water is a separate mesh rather than part of the terrain because it needs
+    its own material -- translucent and smooth, where ground is opaque and
+    rough.
+
+    The surface is built from the river centre-lines and lake circles, not
+    from the flooded grid cells, so its edge is smooth rather than a
+    staircase. The cell mask is still what placement queries, since that only
+    needs to know whether a point is wet.
+
+    Returns None when the scene has no water.
+    """
+    features = getattr(terrain, "features", None)
+    if features is None or not features.has_water:
+        return None
+
+    level = features.water_level
+    colour = WATER_COLOURS.get(terrain.terrain_type, (0.22, 0.42, 0.52))
+    rgba = np.array([*(np.clip(colour, 0, 1) * 255).astype(np.uint8), 255],
+                    dtype=np.uint8)
+
+    all_verts, all_faces, offset = [], [], 0
+
+    for line, half_width in features.rivers:
+        verts, faces = _river_ribbon(line, max(half_width - inset, 0.5),
+                                     level, terrain.size)
+        if verts is None:
+            continue
+        all_verts.append(verts)
+        all_faces.append(faces + offset)
+        offset += len(verts)
+
+    for cx, cz, radius in features.lakes:
+        verts, faces = _lake_disc(cx, cz, max(radius - inset, 1.0), level)
+        all_verts.append(verts)
+        all_faces.append(faces + offset)
+        offset += len(verts)
+
+    if not all_verts:
+        return None
+
+    mesh = trimesh.Trimesh(vertices=np.vstack(all_verts),
+                           faces=np.vstack(all_faces), process=False)
+
+    # Water is a flat surface seen from above, so every triangle must wind so
+    # its normal points up. Getting this backwards renders the whole river
+    # invisible: the geometry is correct, correctly positioned, and culled as
+    # back-facing. Checking the result rather than reasoning about corner
+    # order means it cannot regress whichever way the mesh gets built.
+    downward = mesh.face_normals[:, 1] < 0
+    if downward.any():
+        faces = mesh.faces.copy()
+        faces[downward] = faces[downward][:, ::-1]
+        mesh = trimesh.Trimesh(vertices=mesh.vertices, faces=faces,
+                               process=False)
+
+    _ = mesh.vertex_normals
+    mesh.visual = trimesh.visual.ColorVisuals(
+        mesh=mesh, vertex_colors=np.tile(rgba, (len(mesh.vertices), 1)))
+    return mesh

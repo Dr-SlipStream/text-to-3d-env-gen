@@ -69,6 +69,35 @@ THEME_DEFAULT_TERRAIN = {
 
 TERRAIN_SIZES = ["small", "medium", "large"]
 
+# ---------------------------------------------------------------------------
+# Terrain features.
+#
+# A prompt naming "a forest with a river" was previously parsed as a forest and
+# the river silently dropped -- the theme matched, so nothing even warned. These
+# are landscape elements carved into the heightmap rather than objects placed on
+# it, and other things position themselves relative to them.
+# ---------------------------------------------------------------------------
+TERRAIN_FEATURES = ["river", "lake", "hill", "valley", "cliff", "clearing"]
+
+FEATURE_KEYWORDS = {
+    "river": ["river", "stream", "creek", "brook", "waterway", "canal"],
+    "lake": ["lake", "pond", "pool", "lagoon", "reservoir", "oasis",
+             "waterhole", "tarn"],
+    "hill": ["hill", "hilltop", "knoll", "rise", "mound", "ridge",
+             "hillside", "highland"],
+    "valley": ["valley", "vale", "gorge", "ravine", "basin", "hollow",
+               "dell", "glen"],
+    "cliff": ["cliff", "escarpment", "bluff", "precipice", "crag"],
+    "clearing": ["clearing", "glade", "meadow", "plaza", "square",
+                 "courtyard", "open ground"],
+}
+
+# Features that hold water. Anything below the water line is submerged, so
+# placement has to treat it as unusable ground.
+WATER_FEATURES = {"river", "lake"}
+
+FEATURE_SIZES = ["small", "medium", "large"]
+
 # Side length of the generated terrain in world units (metres), per size.
 TERRAIN_SIZE_METRES = {
     "small": 60,

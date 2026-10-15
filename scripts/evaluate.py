@@ -54,6 +54,19 @@ CORE_SUITE = [
     "a futuristic research station at night with neon lights",
 ]
 
+# Landscape features. These were silently dropped before -- the theme matched,
+# so nothing warned, and the river simply never appeared.
+FEATURE_SUITE = [
+    "a dense forest with a river running through it",
+    "a medieval village beside a lake at dusk",
+    "a camp on a hill overlooking a valley",
+    "a desert outpost around a small oasis",
+    "a village in a valley with a stream",
+    "a forest clearing with tents at dawn",
+    "a sci-fi base on a rocky hill",
+    "a settlement by a wide river at night",
+]
+
 # Prompts that stretch the vocabulary: phrasings, implied objects, unusual
 # combinations. These should still work.
 STRETCH_SUITE = [
@@ -82,9 +95,10 @@ STRESS_SUITE = [
 
 SUITES = {
     "core": CORE_SUITE,
+    "features": FEATURE_SUITE,
     "stretch": STRETCH_SUITE,
     "stress": STRESS_SUITE,
-    "all": CORE_SUITE + STRETCH_SUITE + STRESS_SUITE,
+    "all": CORE_SUITE + FEATURE_SUITE + STRETCH_SUITE + STRESS_SUITE,
 }
 
 
@@ -108,6 +122,7 @@ def evaluate_prompt(prompt: str, index: AssetIndex, seed: int,
 
         resolved = resolve_scene(spec, index)
         terrain = Terrain.from_spec(spec, seed=seed)
+        terrain.apply_features(spec.features, seed=seed)
         placed = layout_scene(resolved, terrain, seed=seed)
         report = validate(placed)
 
@@ -139,6 +154,9 @@ def evaluate_prompt(prompt: str, index: AssetIndex, seed: int,
         row.update({
             "theme": spec.theme,
             "theme_recognised": spec.theme_recognised,
+            "features": ",".join(f.type for f in spec.features) or "-",
+            "water_pct": (round(terrain.features.water_fraction * 100, 1)
+                          if terrain.features else 0.0),
             "terrain": spec.terrain.type,
             "size_m": size,
             "parser": spec.parser,
@@ -172,17 +190,18 @@ def evaluate_prompt(prompt: str, index: AssetIndex, seed: int,
 
 
 def print_table(rows: list) -> None:
-    print(f"\n{'prompt':<44}{'theme':<18}{'inst':>6}{'bld':>5}"
-          f"{'cov':>6}{'conf':>7}{'weak':>6}{'valid':>7}{'sec':>7}")
-    print("-" * 106)
+    print(f"\n{'prompt':<42}{'theme':<17}{'features':<14}{'inst':>6}"
+          f"{'cov':>6}{'conf':>7}{'valid':>7}{'sec':>6}")
+    print("-" * 105)
     for r in rows:
         if r.get("error"):
             print(f"{r['prompt'][:43]:<44}{'ERROR':<18}{r['error'][:40]}")
             continue
         flag = "ok" if r["valid"] else "FAIL"
-        print(f"{r['prompt'][:43]:<44}{r['theme']:<18}{r['instances']:>6}"
-              f"{r['buildings']:>5}{r['coverage_pct']:>5}%{r['mean_conf']:>7.2f}"
-              f"{r['weak_matches']:>6}{flag:>7}{r['total_s']:>7.1f}")
+        print(f"{r['prompt'][:41]:<42}{r['theme']:<17}"
+              f"{r.get('features', '-')[:13]:<14}{r['instances']:>6}"
+              f"{r['coverage_pct']:>5}%{r['mean_conf']:>7.2f}"
+              f"{flag:>7}{r['total_s']:>6.1f}")
 
 
 def report_weak(rows: list, limit: int = 30) -> None:

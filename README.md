@@ -62,6 +62,24 @@ Once the asset library is built, generate a full 3D scene:
 python scripts/generate.py "a foggy medieval village at dusk" --open
 ```
 
+### Two layout paths
+
+The default is rule-based: per-theme tables decide what a place contains and
+where it goes.
+
+`--graph` uses the relational path instead. The model describes the place as
+regions and spatial relations -- *one campfire at the centre of the camp, six
+tents ringed around it facing it, trees scattered through the woods avoiding
+the camp* -- and a solver satisfies them. It carries no knowledge of camps or
+villages, so new kinds of place need no new code.
+
+```bash
+python scripts/generate.py "a forest camp around a campfire beside a river" \
+    --graph --show-graph --size large
+```
+
+`--show-graph` prints the structure before it is solved.
+
 That writes `outputs/<name>/` containing `scene.glb` (open in Blender, Unity or
 anything that reads glTF) and `index.html` (a real-time viewer with
 time-of-day lighting, weather fog and shadows).
@@ -78,8 +96,19 @@ src/
   asset_rules.py            filename cleaning + category classification
   asset_index.py            stage 2: embedding + vector search over assets
   asset_resolution.py       stage 2: SceneSpec → concrete 3D models
-  terrain.py                stage 3: heightmap generation + height/slope queries
+  terrain.py                stage 3: heightmap, height/slope queries, and
+                            landscape features (rivers, lakes, hills, valleys)
+  scene_graph.py            relational scene description: regions, groups,
+                            and the spatial relations between them
+  solver.py                 satisfies those relations -- no theme knowledge
+  graph_builder.py          gets a graph from the model, or compiles one
+                            from the flat spec as a fallback
+  graph_pipeline.py         binds groups to real models and produces a
+                            PlacedScene the exporter already understands
+  graph_dressing.py         adds the things no description mentions:
+                            ground cover, variation, consistent density
   layout.py                 stage 3: object placement, collision avoidance
+                            (the original rule-based path, still the default)
   dressing.py               stage 3: fills the world with background detail
   appearance.py             real-world scaling + colour palette
   export_gltf.py            stage 5: bake everything into one .glb (fallback)

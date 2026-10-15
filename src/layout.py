@@ -33,6 +33,19 @@ MAX_ATTEMPTS = 60
 # gameplay-flow agent will walk in Week 4.
 PATH_HALF_WIDTH = 3.0
 
+# How far back from the waterline each category has to stand, in metres.
+#
+# Nothing may sit in water, but the margin differs: a building on the very
+# edge of a river looks precarious, whereas reeds and rocks belong there.
+WATER_MARGIN = {
+    "building": 6.0,
+    "structure": 3.0,
+    "light_source": 3.0,
+    "prop": 2.0,
+    "rock": 0.5,
+    "vegetation": 1.0,
+}
+
 # Buildings need near-level ground; scatter objects can handle a slope.
 MAX_SLOPE = {
     "building": 0.18,
@@ -320,19 +333,29 @@ CORE_CATEGORIES = {"building", "structure", "light_source"}
 CORE_EXCLUSION = {"vegetation": 0.75, "rock": 0.55}
 
 
-def _settlement_centre(size: float, path, rng) -> Tuple[float, float]:
+def _settlement_centre(size: float, path, rng, terrain=None
+                       ) -> Tuple[float, float]:
     """Put the village on the path, near the middle of the scene.
 
     Anchoring to the path means the road runs through the settlement rather
-    than past it.
+    than past it. If the first choice lands in water, try again -- a village
+    founded in the middle of a lake leaves nowhere to put the buildings.
     """
-    if path:
-        mid = path[len(path) // 2]
-        jitter = size * 0.05
-        return (float(np.clip(mid[0] + rng.normal(0, jitter),
-                              size * 0.3, size * 0.7)),
-                float(np.clip(mid[1] + rng.normal(0, jitter),
-                              size * 0.3, size * 0.7)))
+    if not path:
+        return (size / 2, size / 2)
+
+    mid = path[len(path) // 2]
+    jitter = size * 0.05
+
+    for attempt in range(24):
+        spread = jitter * (1 + attempt * 0.25)
+        x = float(np.clip(mid[0] + rng.normal(0, spread),
+                          size * 0.25, size * 0.75))
+        z = float(np.clip(mid[1] + rng.normal(0, spread),
+                          size * 0.25, size * 0.75))
+        if terrain is None or not terrain.is_water(x, z, margin=size * 0.06):
+            return x, z
+
     return (size / 2, size / 2)
 
 
@@ -387,7 +410,22 @@ def layout_scene(resolved: ResolvedScene, terrain: Terrain,
     size = terrain.size
 
     scene = PlacedScene(terrain=terrain, spec=resolved.spec, seed=seed)
-    scene.path = generate_path(size, rng)
+
+    # Try a few routes and keep the one that spends least time in water. A
+    # road running along a riverbed reads as a mistake; crossing one briefly
+    # reads as a ford.
+    best_path, best_wet = None, None
+    for _ in range(6):
+        candidate = generate_path(size, rng)
+        if terrain.features is None or not terrain.features.has_water:
+            best_path = candidate
+            break
+        wet = sum(1 for x, z in candidate if terrain.is_water(x, z))
+        if best_wet is None or wet < best_wet:
+            best_path, best_wet = candidate, wet
+        if wet == 0:
+            break
+    scene.path = best_path
 
     # Grade the road before anything is placed, so objects sit on the final
     # surface rather than the pre-graded one.
@@ -395,7 +433,7 @@ def layout_scene(resolved: ResolvedScene, terrain: Terrain,
 
     theme = getattr(resolved.spec, "theme", "medieval_village")
     core_r = CORE_RADIUS.get(theme, 0.28) * size
-    core = _settlement_centre(size, scene.path, rng)
+    core = _settlement_centre(size, scene.path, rng, terrain)
     scene.centre = core
     scene.core_radius = core_r
 
@@ -417,6 +455,7 @@ def layout_scene(resolved: ResolvedScene, terrain: Terrain,
         # Buildings and the things that serve them belong in the settlement.
         in_core = cat in CORE_CATEGORIES
         exclusion = CORE_EXCLUSION.get(cat, 0.0) * core_r
+        water_margin = WATER_MARGIN.get(cat, 2.0)
 
         if rule == "clump" and obj.name not in anchors:
             # Several patches rather than one, so a species covers the map in
@@ -460,6 +499,10 @@ def layout_scene(resolved: ResolvedScene, terrain: Terrain,
                                            scene.path, anchor)
                 else:
                     x, z = _candidate(rule, size, rng, scene.path, anchor)
+
+                # Nothing stands in a river or a lake.
+                if terrain.is_water(x, z, margin=water_margin):
+                    continue
 
                 # Keep the settlement's ground clear of forest and boulders
                 if exclusion:

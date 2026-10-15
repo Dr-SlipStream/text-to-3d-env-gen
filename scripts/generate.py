@@ -27,6 +27,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.asset_index import AssetIndex                      # noqa: E402
 from src.asset_resolution import resolve_scene              # noqa: E402
 from src.dressing import dress_spec                         # noqa: E402
+from src.graph_builder import build_graph                   # noqa: E402
+from src.graph_dressing import dress as dress_graph         # noqa: E402
+from src.graph_pipeline import build_scene, describe, resolve_groups  # noqa: E402
 from src.export_gltf import export_glb                      # noqa: E402
 from src.export_scene import export_instanced               # noqa: E402
 from src.layout import layout_scene, validate               # noqa: E402
@@ -54,6 +57,13 @@ def main() -> int:
                    help="use a specific asset manifest instead of the "
                         "project's own (tests use this so they never touch "
                         "the real library)")
+    p.add_argument("--graph", action="store_true",
+                   help="use the relational scene graph instead of the "
+                        "rule-based layout: the model describes the place as "
+                        "regions and spatial relations, and a solver "
+                        "satisfies them")
+    p.add_argument("--show-graph", action="store_true",
+                   help="print the scene graph before solving it")
     p.add_argument("--candidates", type=int, default=1,
                    help="generate N layouts and keep the most valid one")
     p.add_argument("--open", action="store_true",
@@ -115,10 +125,90 @@ def main() -> int:
         print(f"\n{e}")
         return 1
 
-    # Fill the world with background detail the prompt never mentions but
-    # every real place has. Without this a scene is a few models on a field.
     from src import vocab
     size_m = vocab.TERRAIN_SIZE_METRES[spec.terrain.size]
+
+    # ---- the relational path -------------------------------------------
+    if args.graph:
+        graph, source = build_graph(args.prompt, spec, client=client,
+                                    force_fallback=args.fallback,
+                                    size_metres=size_m)
+        print(f"  [2/5] Scene graph ({source}): {graph.summary()}")
+        for w in graph.warnings:
+            print(f"        ! {w}")
+
+        # Fill in the things no description mentions: ground cover, variation
+        # within populations, and a consistent overall richness.
+        filled = dress_graph(graph, spec, size_m, density=args.density)
+        if filled["cover"] or filled["variants"]:
+            print(f"        + {filled['cover']} ground-cover groups, "
+                  f"{filled['variants']} variants, "
+                  f"densities x{filled['scale']}")
+
+        terrain = Terrain.from_spec(spec, seed=seed)
+        terrain.apply_features(spec.features, seed=seed)
+
+        feature_text = ""
+        if spec.features:
+            feature_text = " | " + ", ".join(
+                f"{f.size} {f.type}" for f in spec.features)
+        print(f"  [3/5] Terrain: {terrain.terrain_type}, "
+              f"{terrain.size:.0f}m, height "
+              f"{terrain.heights.min():.1f}..{terrain.heights.max():.1f}m"
+              f"{feature_text}")
+        if terrain.water_level is not None:
+            print(f"        water at {terrain.water_level:.1f}m, covering "
+                  f"{terrain.features.water_fraction * 100:.0f}% of the "
+                  "terrain")
+
+        if args.show_graph:
+            resolved, _ = resolve_groups(graph, index, theme=spec.theme)
+            print()
+            print(describe(graph, resolved))
+            print()
+
+        placed = build_scene(graph, terrain, index, spec=spec, seed=seed)
+        best_report = validate(placed)
+
+        print(f"  [4/5] Placed: {placed.summary()}")
+        print(f"        valid={best_report['valid']} "
+              f"overlaps={best_report['overlaps']} "
+              f"floating={best_report['floating']} "
+              f"blocking-path={best_report['on_path']}")
+        for w in placed.warnings:
+            print(f"        ! {w}")
+
+        out_dir = args.out / slugify(args.prompt)
+        report = (export_glb(placed, out_dir / "scene.glb") if args.baked
+                  else export_instanced(placed, out_dir,
+                                        palette=args.palette))
+        viewer = write_viewer(placed, out_dir, title=args.prompt[:60])
+
+        (out_dir / "lighting.json").write_text(
+            json.dumps(lighting_config(placed), indent=2), encoding="utf-8")
+        (out_dir / "scene.json").write_text(json.dumps({
+            "prompt": args.prompt, "seed": seed, "mode": "graph",
+            "graph_source": source,
+            "spec": spec.model_dump(),
+            "graph": graph.model_dump(),
+            "scene": placed.to_dict(),
+            "validation": {k: v for k, v in best_report.items()
+                           if k != "details"},
+            "export": report,
+        }, indent=2), encoding="utf-8")
+
+        print(f"  [5/5] Exported {report['size_mb']} MB, "
+              f"{report['total_triangles']:,} triangles rendered")
+        print(f"\n  Done in {time.time() - t0:.1f}s -> {out_dir}\n")
+        print(f"  View it:  python -m http.server -d {out_dir} 8000")
+        print("            then open http://localhost:8000\n")
+        if args.open:
+            webbrowser.open(viewer.resolve().as_uri())
+        return 0
+
+    # ---- the rule-based path -------------------------------------------
+    # Fill the world with background detail the prompt never mentions but
+    # every real place has. Without this a scene is a few models on a field.
     if args.density > 0:
         spec, added = dress_spec(spec, size_m, density=args.density)
         print(f"        + {added} filler instances "
@@ -131,8 +221,20 @@ def main() -> int:
 
     # -- 3. terrain -------------------------------------------------------
     terrain = Terrain.from_spec(spec, seed=seed)
+    # Landscape features are carved before anything is placed, because
+    # everything downstream has to respect them.
+    terrain.apply_features(spec.features, seed=seed)
+
+    feature_text = ""
+    if spec.features:
+        feature_text = " | " + ", ".join(
+            f"{f.size} {f.type}" for f in spec.features)
     print(f"  [3/5] Terrain: {terrain.terrain_type}, {terrain.size:.0f}m, "
-          f"height {terrain.heights.min():.1f}..{terrain.heights.max():.1f}m")
+          f"height {terrain.heights.min():.1f}..{terrain.heights.max():.1f}m"
+          f"{feature_text}")
+    if terrain.water_level is not None:
+        print(f"        water at {terrain.water_level:.1f}m, covering "
+              f"{terrain.features.water_fraction * 100:.0f}% of the terrain")
 
     # -- 4. layout --------------------------------------------------------
     # Generating several candidates and keeping the best is the hook the
@@ -141,6 +243,7 @@ def main() -> int:
     best, best_report, best_terrain = None, None, None
     for i in range(max(1, args.candidates)):
         t = Terrain.from_spec(spec, seed=seed + i)
+        t.apply_features(spec.features, seed=seed + i)
         cand = layout_scene(resolved, t, seed=seed + i)
         report = validate(cand)
         score = len(cand.instances) - cand.skipped

@@ -304,6 +304,34 @@ async function build() {
     scene.add(g.scene);
   }
 
+  // Water gets its own material: smooth and translucent, where ground is
+  // rough and opaque. Rendered last and without writing depth, so objects
+  // standing in the shallows are not clipped away by it.
+  if (manifest.water) {
+    try {
+      const g = await load(manifest.water);
+      g.scene.traverse((o) => {
+        if (!o.isMesh) return;
+        o.castShadow = false;
+        o.receiveShadow = true;
+        o.renderOrder = 1;
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of mats) {
+          if (!m) continue;
+          m.transparent = true;
+          m.opacity = 0.82;
+          m.roughness = 0.12;     // smooth, so it catches the sun
+          m.metalness = 0.25;     // a little, for sheen without looking metal
+          m.depthWrite = false;
+          m.needsUpdate = true;
+        }
+      });
+      scene.add(g.scene);
+    } catch (e) {
+      console.warn('no water mesh', e);
+    }
+  }
+
   // Load every distinct model once.
   const models = new Map();
   await Promise.all(manifest.assets.map(async (a) => {
@@ -576,11 +604,16 @@ def write_viewer(scene, out_dir: Path,
         # substitution is honest about the system's range.
         theme_label += "  (approximated)"
 
+    features = getattr(spec, "features", None) if spec else None
+    feature_label = (", ".join(f"{f.size} {f.type}" for f in features)
+                     if features else None)
+
     rows = [
         ("Theme", theme_label),
         ("Terrain", f"{spec.terrain.type.replace('_', ' ')} · {int(size)} m"
                     if spec else "-"),
         ("Lighting", f"{tod} · {weather} · {mood}"),
+    ] + ([("Landscape", feature_label)] if feature_label else []) + [
         ("Objects", f"{len(scene.instances)} instances"),
         ("Triangles", f"{scene.total_triangles:,}"),
     ]

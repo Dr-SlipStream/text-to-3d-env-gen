@@ -15,7 +15,8 @@ import re
 from typing import List
 
 from . import vocab
-from .schema import Lighting, SceneObject, SceneSpec, Terrain
+from .schema import (Lighting, SceneObject, SceneSpec, Terrain,
+                     TerrainFeature)
 
 # Words that suggest a specific object, mapped to (category, default_quantity).
 # Extend this as you add assets to the library.
@@ -142,6 +143,19 @@ def parse(prompt: str) -> SceneSpec:
 
     theme, theme_matched = _find(text, vocab.THEME_KEYWORDS,
                                  "medieval_village", report_match=True)
+
+    # Landscape features named in the prompt. These were previously dropped in
+    # silence -- "a forest with a river" parsed as a forest and the river
+    # vanished, without even a warning, because the theme had matched.
+    features = []
+    for feature_type, words in vocab.FEATURE_KEYWORDS.items():
+        if any(re.search(rf"\b{re.escape(w)}", text) for w in words):
+            size = "medium"
+            if re.search(r"\b(small|little|narrow|tiny)\b", text):
+                size = "small"
+            elif re.search(r"\b(large|wide|broad|great|big)\b", text):
+                size = "large"
+            features.append(TerrainFeature(type=feature_type, size=size))
     terrain_type = _find(
         text, vocab.TERRAIN_KEYWORDS, vocab.THEME_DEFAULT_TERRAIN[theme]
     )
@@ -251,6 +265,7 @@ def parse(prompt: str) -> SceneSpec:
         lighting=Lighting(
             time_of_day=time_of_day, weather=weather, mood=mood
         ),
+        features=features,
         objects=objects,
         source_prompt=prompt,
         parser="fallback",

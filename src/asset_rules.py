@@ -13,7 +13,7 @@ ingest time, and any mistakes are easy to override in the manifest.
 from __future__ import annotations
 
 import re
-from typing import List, Optional
+from typing import List, Optional, Optional
 
 # ---------------------------------------------------------------------------
 # Category rules.
@@ -220,6 +220,23 @@ def classify(name: str, pack: str = "") -> str:
             if re.search(rf"\b{kw_pattern}(s|es)?\b", haystack):
                 return category
     return "prop"          # safest default: small, scatterable, low impact
+
+
+def classify_confident(name: str) -> Optional[str]:
+    """Category for `name`, or None when no keyword actually matched.
+
+    `classify()` falls back to "prop" for anything unrecognised, which is the
+    right default for an asset but useless as evidence. This distinguishes
+    "we know this is a light source" from "we have no idea, call it a prop",
+    so callers can tell when the answer is worth trusting.
+    """
+    haystack = name.lower().replace("_", " ").replace("-", " ")
+    for category, keywords in CATEGORY_RULES:
+        for kw in keywords:
+            kw_pattern = re.escape(kw.replace("_", " "))
+            if re.search(rf"\b{kw_pattern}(s|es)?\b", haystack):
+                return category
+    return None
 
 
 def theme_hints(pack: str) -> List[str]:

@@ -30,7 +30,8 @@ from typing import Dict, List, Optional
 import numpy as np
 import trimesh
 
-from .export_gltf import build_terrain_mesh, ensure_pbr_material
+from .export_gltf import (build_terrain_mesh, build_water_mesh,
+                          ensure_pbr_material)
 from .layout import PlacedScene
 
 # Formats a browser can load directly. Anything else is converted on the way
@@ -138,6 +139,7 @@ def export_instanced(scene: PlacedScene, out_dir: Path,
 
     # -- terrain ----------------------------------------------------------
     terrain_tris = 0
+    water_tris = 0
     if scene.terrain is not None:
         ground = build_terrain_mesh(
             scene.terrain, subdivisions=terrain_subdivisions,
@@ -145,6 +147,16 @@ def export_instanced(scene: PlacedScene, out_dir: Path,
             core_radius=scene.core_radius)
         ground.export(out_dir / "terrain.glb")
         ensure_pbr_material(out_dir / "terrain.glb")
+
+        # Water is its own mesh so it can take a translucent material.
+        water = build_water_mesh(scene.terrain)
+        if water is not None:
+            water.export(out_dir / "water.glb")
+            # Double-sided as well: a flat surface is cheap to draw twice,
+            # and it means a viewer that culls differently still shows it.
+            ensure_pbr_material(out_dir / "water.glb", roughness=0.15,
+                                double_sided=True)
+            water_tris = len(water.faces)
         terrain_tris = len(ground.faces)
 
     # -- assets -----------------------------------------------------------
@@ -186,9 +198,17 @@ def export_instanced(scene: PlacedScene, out_dir: Path,
         })
 
     spec = scene.spec
+    terrain_features = (scene.terrain.features.to_dict()
+                        if scene.terrain is not None
+                        and scene.terrain.features is not None else None)
+
     manifest = {
         "version": 1,
         "terrain": "terrain.glb" if scene.terrain is not None else None,
+        "water": "water.glb" if water_tris else None,
+        "water_level": (scene.terrain.water_level
+                        if scene.terrain is not None else None),
+        "terrain_features": terrain_features,
         "size": scene.terrain.size if scene.terrain else 120.0,
         "ground_y": (round(float(scene.terrain.heights.min()), 3)
                      if scene.terrain is not None else 0.0),
@@ -203,7 +223,8 @@ def export_instanced(scene: PlacedScene, out_dir: Path,
             "instance_count": len(instances),
             "unique_assets": len(assets),
             "terrain_triangles": terrain_tris,
-            "rendered_triangles": terrain_tris + rendered_tris,
+            "water_triangles": water_tris,
+            "rendered_triangles": terrain_tris + water_tris + rendered_tris,
             "unique_triangles": terrain_tris + sum(
                 a["triangles"] for a in assets.values()),
         },

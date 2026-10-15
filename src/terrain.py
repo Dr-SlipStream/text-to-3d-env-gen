@@ -15,7 +15,7 @@ seed -- which matters for reproducible results.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -144,6 +144,8 @@ class Terrain:
         self.seed = seed
         self.res = heights.shape[0]
         self.preset = PRESETS.get(terrain_type, PRESETS["grassland"])
+        # Populated by apply_features(); until then the terrain has none.
+        self.features = None
 
     @classmethod
     def generate(cls, terrain_type: str, size_metres: float,
@@ -255,6 +257,203 @@ class Terrain:
         w = _smoothstep(w) * strength
         self.heights = self.heights * (1 - w) + target * w
 
+    # -- feature carving --------------------------------------------------
+    def _grid_coords(self):
+        """World-space X and Z for every heightmap cell, as 2D arrays."""
+        axis = np.linspace(0, self.size, self.res)
+        zz, xx = np.meshgrid(axis, axis, indexing="ij")
+        return xx, zz
+
+    def _distance_to_polyline(self, points: np.ndarray) -> np.ndarray:
+        """Shortest distance from every grid cell to a polyline.
+
+        Chunked so a dense line on a fine grid doesn't allocate a huge
+        intermediate array.
+        """
+        xx, zz = self._grid_coords()
+        best = np.full(xx.shape, np.inf)
+        for i in range(0, len(points), 24):
+            chunk = points[i:i + 24]
+            d = np.min(np.hypot(xx[..., None] - chunk[:, 0],
+                                zz[..., None] - chunk[:, 1]), axis=-1)
+            best = np.minimum(best, d)
+        return best
+
+    def carve_river(self, rng, scale: float = 1.0) -> np.ndarray:
+        """Cut a channel across the terrain and return its centre-line.
+
+        The channel is cut to a fixed level rather than a fixed depth below
+        the existing ground: water finds one surface, so a river that simply
+        subtracted a constant would run uphill wherever the terrain rose.
+        """
+        line = _meander(self.size, rng)
+        dist = self._distance_to_polyline(line)
+
+        half = RIVER_HALF_WIDTH * scale
+        bank = RIVER_BANK * scale
+
+        # Water level: low enough that the channel is clearly below the
+        # surrounding land, high enough that banks aren't sheer.
+        lo, hi = float(self.heights.min()), float(self.heights.max())
+        level = lo + (hi - lo) * 0.28
+        bed = level - RIVER_DEPTH
+
+        # 1 inside the channel, easing to 0 at the far edge of the bank.
+        w = np.clip(1.0 - (dist - half) / max(bank, 1e-6), 0.0, 1.0)
+        w = np.where(dist <= half, 1.0, w)
+        w = _smoothstep(w)
+
+        self.heights = self.heights * (1 - w) + bed * w
+
+        if self.features is None:
+            self.features = TerrainFeatures(self.res)
+        # Water sits where the channel was actually cut, not merely wherever
+        # the ground happens to be low.
+        self.features.water_mask |= (dist <= half + bank * 0.35)
+        # Keep the width alongside the centre-line: the surface mesh is built
+        # from these numbers rather than from the grid, so its edge is smooth.
+        self.features.rivers.append((line, half + bank * 0.30))
+        self.features.water_level = (level if self.features.water_level is None
+                                     else min(self.features.water_level, level))
+        return line
+
+    def carve_lake(self, rng, scale: float = 1.0) -> tuple:
+        """Sink a basin and return (x, z, radius)."""
+        radius = self.size * 0.16 * scale
+        margin = radius + self.size * 0.08
+        cx = float(rng.uniform(margin, self.size - margin))
+        cz = float(rng.uniform(margin, self.size - margin))
+
+        xx, zz = self._grid_coords()
+        dist = np.hypot(xx - cx, zz - cz)
+
+        lo, hi = float(self.heights.min()), float(self.heights.max())
+        level = lo + (hi - lo) * 0.30
+        bed = level - LAKE_DEPTH
+
+        # Basin profile: flat bottom, easing up to the shoreline.
+        w = np.clip(1.0 - dist / max(radius, 1e-6), 0.0, 1.0)
+        w = _smoothstep(w) ** 0.7
+
+        self.heights = self.heights * (1 - w) + bed * w
+
+        if self.features is None:
+            self.features = TerrainFeatures(self.res)
+        self.features.water_mask |= (dist <= radius * 0.88)
+        self.features.lakes.append((cx, cz, radius))
+        self.features.water_level = (level if self.features.water_level is None
+                                     else min(self.features.water_level, level))
+        return cx, cz, radius
+
+    def raise_hill(self, rng, scale: float = 1.0) -> tuple:
+        """Raise a rounded rise and return (x, z, radius, height)."""
+        radius = self.size * 0.20 * scale
+        height = max(4.0, self.preset.amplitude * 1.4) * scale
+        margin = radius * 0.6
+        cx = float(rng.uniform(margin, self.size - margin))
+        cz = float(rng.uniform(margin, self.size - margin))
+
+        xx, zz = self._grid_coords()
+        dist = np.hypot(xx - cx, zz - cz)
+        w = _smoothstep(np.clip(1.0 - dist / max(radius, 1e-6), 0.0, 1.0))
+
+        self.heights = self.heights + w * height
+
+        if self.features is None:
+            self.features = TerrainFeatures(self.res)
+        self.features.hills.append((cx, cz, radius, height))
+        return cx, cz, radius, height
+
+    def carve_valley(self, rng, scale: float = 1.0) -> tuple:
+        """Lower a broad depression. Returns (x, z, radius, depth)."""
+        radius = self.size * 0.30 * scale
+        depth = max(3.0, self.preset.amplitude * 0.9) * scale
+        cx = float(rng.uniform(self.size * 0.3, self.size * 0.7))
+        cz = float(rng.uniform(self.size * 0.3, self.size * 0.7))
+
+        xx, zz = self._grid_coords()
+        dist = np.hypot(xx - cx, zz - cz)
+        w = _smoothstep(np.clip(1.0 - dist / max(radius, 1e-6), 0.0, 1.0))
+
+        self.heights = self.heights - w * depth
+        return cx, cz, radius, depth
+
+    def flatten_clearing(self, rng, scale: float = 1.0) -> tuple:
+        """Level an area of open ground. Returns (x, z, radius)."""
+        radius = self.size * 0.15 * scale
+        margin = radius + self.size * 0.05
+        cx = float(rng.uniform(margin, self.size - margin))
+        cz = float(rng.uniform(margin, self.size - margin))
+
+        self.flatten_disc(cx, cz, radius, strength=0.9)
+
+        if self.features is None:
+            self.features = TerrainFeatures(self.res)
+        self.features.clearings.append((cx, cz, radius))
+        return cx, cz, radius
+
+    def apply_features(self, features, seed: int = 0) -> None:
+        """Carve every feature the scene specification asked for.
+
+        Order matters: hills and valleys reshape the land, so water is cut
+        afterwards and finds the level of the reshaped surface. Cutting a
+        river first and then raising a hill through it would dam the river.
+        """
+        if not features:
+            return
+
+        rng = np.random.default_rng(seed + 4242)
+        order = {"hill": 0, "valley": 1, "cliff": 2,
+                 "clearing": 3, "lake": 4, "river": 5}
+        for feature in sorted(features, key=lambda f: order.get(f.type, 9)):
+            scale = FEATURE_SCALE.get(feature.size, 1.0)
+            if feature.type == "river":
+                self.carve_river(rng, scale)
+            elif feature.type == "lake":
+                self.carve_lake(rng, scale)
+            elif feature.type == "hill":
+                self.raise_hill(rng, scale)
+            elif feature.type == "valley":
+                self.carve_valley(rng, scale)
+            elif feature.type == "clearing":
+                self.flatten_clearing(rng, scale)
+            elif feature.type == "cliff":
+                # A cliff is a hill with a much tighter falloff, which gives
+                # a steep face rather than a dome.
+                self.raise_hill(rng, scale * 0.55)
+
+    # -- water queries ----------------------------------------------------
+    @property
+    def water_level(self) -> Optional[float]:
+        return self.features.water_level if self.features else None
+
+    def is_water(self, x: float, z: float, margin: float = 0.0) -> bool:
+        """True if this position is water, or within `margin` metres of it.
+
+        Reads the carved mask rather than comparing height to the water level.
+        The level is a percentile of terrain height, so a height comparison
+        marks a large share of perfectly dry ground as submerged.
+
+        `margin` keeps objects back from the waterline, where a model would
+        otherwise stand half-sunk.
+        """
+        if self.features is None or not self.features.has_water:
+            return False
+
+        mask = self.features.water_mask
+        cell = self.size / (self.res - 1)
+        reach = max(int(np.ceil(margin / cell)), 0)
+
+        gx = int(np.clip(x / self.size * (self.res - 1), 0, self.res - 1))
+        gz = int(np.clip(z / self.size * (self.res - 1), 0, self.res - 1))
+
+        if reach == 0:
+            return bool(mask[gz, gx])
+
+        x0, x1 = max(0, gx - reach), min(self.res, gx + reach + 1)
+        z0, z1 = max(0, gz - reach), min(self.res, gz + reach + 1)
+        return bool(mask[z0:z1, x0:x1].any())
+
     def colour_at(self, x: float, z: float) -> tuple:
         """Ground colour at a position, blended by elevation."""
         h = self.height_at(x, z)
@@ -277,3 +476,102 @@ class Terrain:
     def __repr__(self) -> str:
         return (f"<Terrain {self.terrain_type} {self.size:.0f}m "
                 f"h={self.heights.min():.1f}..{self.heights.max():.1f}>")
+
+
+# ---------------------------------------------------------------------------
+# Terrain features
+#
+# Rivers, lakes, hills and valleys are carved into the heightmap before any
+# object is placed, because everything downstream has to respect them: you
+# cannot build in a river, vegetation crowds its banks, and a road has to
+# cross it rather than run through it.
+#
+# All of it is arithmetic on the height array -- no model, no dataset.
+# ---------------------------------------------------------------------------
+
+# Feature dimensions as a fraction of scene size, by declared size.
+FEATURE_SCALE = {"small": 0.55, "medium": 1.0, "large": 1.55}
+
+# How deep water cuts below the surrounding ground, in metres.
+RIVER_DEPTH = 2.2
+LAKE_DEPTH = 3.0
+
+# Half-width of a river channel in metres, before size scaling.
+RIVER_HALF_WIDTH = 5.0
+RIVER_BANK = 7.0            # how far the banks slope up beyond the channel
+
+
+def _meander(size: float, rng: np.random.Generator,
+             points: int = 7) -> np.ndarray:
+    """A wandering line across the scene, for a river to follow.
+
+    Deliberately not the same generator as the road: a river should not run
+    parallel to it or the two read as one feature.
+    """
+    vertical = rng.random() < 0.5
+    if vertical:
+        start = (rng.uniform(0.15, 0.85) * size, 0.0)
+        end = (rng.uniform(0.15, 0.85) * size, size)
+    else:
+        start = (0.0, rng.uniform(0.15, 0.85) * size)
+        end = (size, rng.uniform(0.15, 0.85) * size)
+
+    xs = np.linspace(start[0], end[0], points)
+    zs = np.linspace(start[1], end[1], points)
+
+    drift = size * 0.20
+    if vertical:
+        xs = xs + rng.normal(0, drift, points)
+        xs[0], xs[-1] = start[0], end[0]
+    else:
+        zs = zs + rng.normal(0, drift, points)
+        zs[0], zs[-1] = start[1], end[1]
+
+    xs = np.clip(xs, size * 0.05, size * 0.95)
+    zs = np.clip(zs, size * 0.05, size * 0.95)
+
+    t = np.linspace(0, 1, points)
+    fine = np.linspace(0, 1, points * 14)
+    return np.column_stack([np.interp(fine, t, xs), np.interp(fine, t, zs)])
+
+
+class TerrainFeatures:
+    """Everything carved into a terrain, and where the water sits."""
+
+    def __init__(self, resolution: int = 128):
+        self.water_level: Optional[float] = None
+        # Where water actually is, rather than inferred from height.
+        #
+        # Deriving it as "anything below the water level" marked 42% of an
+        # untouched grassland as submerged, because the level is a percentile
+        # of terrain height and a lot of natural ground sits below it. Only
+        # the cells we carve hold water.
+        self.water_mask: np.ndarray = np.zeros((resolution, resolution),
+                                               dtype=bool)
+        self.rivers: List[np.ndarray] = []
+        self.lakes: List[tuple] = []          # (x, z, radius)
+        self.hills: List[tuple] = []          # (x, z, radius, height)
+        self.clearings: List[tuple] = []      # (x, z, radius)
+
+    @property
+    def has_water(self) -> bool:
+        return self.water_level is not None and bool(self.water_mask.any())
+
+    @property
+    def water_fraction(self) -> float:
+        """Share of the terrain under water, for sanity checks."""
+        return float(self.water_mask.mean())
+
+    def to_dict(self) -> dict:
+        return {
+            "water_level": (round(self.water_level, 3)
+                            if self.water_level is not None else None),
+            "water_fraction": round(self.water_fraction, 4),
+            "rivers": [{"centre_line": [[round(float(x), 2), round(float(z), 2)]
+                                       for x, z in line],
+                        "half_width": round(float(w), 2)}
+                       for line, w in self.rivers],
+            "lakes": [[round(v, 2) for v in lake] for lake in self.lakes],
+            "hills": [[round(v, 2) for v in h] for h in self.hills],
+            "clearings": [[round(v, 2) for v in c] for c in self.clearings],
+        }

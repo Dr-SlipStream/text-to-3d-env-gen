@@ -480,3 +480,47 @@ def test_terrain_sections_are_flagged_modular(name, modular):
     which is how a forest scene ended up covered in them.
     """
     assert asset_rules.is_modular(name) is modular
+
+
+# --- category agreement between requests and assets -------------------------
+
+@pytest.mark.parametrize("name,llm_guess,expected", [
+    # Both measured in a real run, both sent the search to the wrong shelf.
+    ("firepit", "structure", "light_source"),
+    ("log", "prop", "vegetation"),
+    ("bonfire", "prop", "prop"),
+    ("tent", "prop", "building"),
+    ("bridge", "building", "structure"),
+    ("barrel", "structure", "prop"),
+    ("pine tree", "prop", "vegetation"),
+    ("watchtower", "prop", "building"),
+])
+def test_requests_are_categorised_like_assets(name, llm_guess, expected):
+    """Retrieval searches within a category, so if the request's category and
+    the asset's disagree the search looks on the wrong shelf entirely.
+
+    The model called a firepit a "structure" and it matched a metal wall at
+    0.28; it called a log a "prop" and it matched a bed at 0.44. The library
+    held perfectly good campfires and logs the search never saw. Both are now
+    categorised by the same keyword table that categorises the assets.
+    """
+    from src.schema import SceneObject
+
+    assert SceneObject(name=name, category=llm_guess).category == expected
+
+
+def test_unrecognised_names_keep_the_model_s_category():
+    """We only override when a keyword actually matched. For a name we don't
+    recognise, the model's guess is the best information available."""
+    from src.schema import SceneObject
+
+    obj = SceneObject(name="zorblat", category="structure")
+    assert obj.category == "structure"
+
+
+def test_classify_confident_distinguishes_a_guess_from_a_match():
+    assert asset_rules.classify_confident("campfire") == "light_source"
+    assert asset_rules.classify_confident("oak tree") == "vegetation"
+    assert asset_rules.classify_confident("zorblat") is None
+    # classify() still answers, it just isn't evidence
+    assert asset_rules.classify("zorblat") == "prop"

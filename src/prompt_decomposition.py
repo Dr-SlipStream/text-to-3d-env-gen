@@ -34,6 +34,12 @@ You must reply with ONLY a JSON object, no prose, matching this shape:
     "weather": one of {vocab.WEATHER},
     "mood": one of {vocab.MOODS}
   }},
+  "features": [
+    {{
+      "type": one of {vocab.TERRAIN_FEATURES},
+      "size": one of {vocab.FEATURE_SIZES}
+    }}
+  ],
   "objects": [
     {{
       "name": short lowercase noun for the object, e.g. "house", "pine tree",
@@ -53,6 +59,10 @@ Rules:
 - Quantities should suit the scene size: a small scene has fewer objects.
 - Scenery like trees and rocks should use "scatter"; buildings usually
   "along_path" or "cluster"; a single landmark uses "center".
+- "features" are landscape elements shaped into the ground, not objects:
+  a river, a lake, a hill, a valley, a cliff, a clearing. Include them when
+  the description implies one. Leave the list empty when it doesn't. Never
+  list more than three.
 - List only PHYSICAL objects that could be a 3D model. Never list atmosphere
   or effects -- no smoke, fog, mist, shadows, light rays, wind or weather.
   Those belong in the "lighting" fields, not "objects".
