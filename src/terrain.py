@@ -412,6 +412,7 @@ class Terrain:
         if self.features is None:
             self.features = TerrainFeatures(self.res)
         self.features.water_mask |= across < shore - 0.5
+        self.features.sea_mask |= across < shore - 0.5
 
         samples = np.linspace(0, self.size, 48)
         if edge in ("north", "south"):
@@ -519,6 +520,18 @@ class Terrain:
         if self.features is None:
             return False
         return any(b.covers(x, z, margin) for b in self.features.bridges)
+
+    def is_sea(self, x: float, z: float, margin: float = 0.0) -> bool:
+        """True if (x, z) is open sea (not a river or lake), within margin."""
+        if self.features is None or not self.features.sea_mask.any():
+            return False
+        mask = self.features.sea_mask
+        cell = self.size / (self.res - 1)
+        reach = max(int(np.ceil(margin / cell)), 0)
+        gx = int(np.clip(x / self.size * (self.res - 1), 0, self.res - 1))
+        gz = int(np.clip(z / self.size * (self.res - 1), 0, self.res - 1))
+        return bool(mask[max(gz - reach, 0):gz + reach + 1,
+                         max(gx - reach, 0):gx + reach + 1].any())
 
     def is_water(self, x: float, z: float, margin: float = 0.0) -> bool:
         """True if this position is water, or within `margin` metres of it.
@@ -641,6 +654,9 @@ class TerrainFeatures:
         # the cells we carve hold water.
         self.water_mask: np.ndarray = np.zeros((resolution, resolution),
                                                dtype=bool)
+        # The open sea only. Roads stop at it; rivers and lakes are crossed.
+        self.sea_mask: np.ndarray = np.zeros((resolution, resolution),
+                                             dtype=bool)
         self.rivers: List[np.ndarray] = []
         self.lakes: List[tuple] = []          # (x, z, radius)
         self.hills: List[tuple] = []          # (x, z, radius, height)

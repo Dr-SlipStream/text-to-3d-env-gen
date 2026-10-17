@@ -44,8 +44,52 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 python -m src.cli --check          # verify local LLM setup
-python -m src.cli "a foggy medieval village at dusk"
+python scripts/serve.py            # the app: open http://localhost:8000
 ```
+
+### The app
+
+`python scripts/serve.py` starts a local web app. Type a place, press
+**Generate scene**, and watch it build: the language model reads the
+sentence, several candidate layouts are generated, a bot playtests each
+one, and the best is shown in 3D next to the bot's report — flow score,
+walkability map with the route it learned, how fast it learned, and every
+metric behind the score. Earlier scenes stay in the sidebar.
+
+Settings go in the sentence, so there are no flags to remember:
+
+| Say | Does |
+|---|---|
+| `best of 5` / `try 5 layouts` | generate 5 layouts, keep the one that plays best (default 3) |
+| `variation 7` / `seed 7` | a fixed, reproducible variation |
+| `small`, `large`, `200m` | map size |
+| `dense`, `sparse` | how full the scene is |
+| `for unity` | also write a Unity bundle |
+| `quick draft` / `offline` | keyword parsing, no language model |
+| `simple layout` | rule-based layout instead of the scene graph |
+| `no bot` | skip the playtest |
+
+`python scripts/serve.py --offline` runs without Ollama.
+
+### The bot playtest
+
+Every scene is played before you see it (`src/playtest.py`). A Q-learning
+agent is trained on a walkability grid of the scene and must learn to cross
+it from one end of the road to the other. Alongside it, the route is
+measured:
+
+| Metric | What it asks |
+|---|---|
+| Reachability | can every part of the open ground be reached? |
+| Route directness | is the walk sensible, or a long detour? |
+| Chokepoints | how many single-file pinches (a bridge is a good one) |
+| Open ground | room to move, without nothing to navigate |
+| Pacing | the longest stretch of the route with nothing to see |
+| Learnability | how fast and reliably the bot learns the route |
+
+These combine into a **flow score** out of 100. With `best of N`, the
+pipeline playtests each candidate and keeps the highest — generation and
+evaluation in one closed loop.
 
 Full setup instructions, including installing Ollama: **[docs/SETUP.md](docs/SETUP.md)**
 Building the 3D asset library: **[docs/ASSETS.md](docs/ASSETS.md)**
@@ -120,8 +164,14 @@ src/
   export_scene.py           stage 5: keep each asset's own materials (default)
   viewer.py                 stage 5: three.js viewer with lighting/fog/shadows
   cli.py                    command-line entry point
+  pipeline.py               the closed loop: prompt → candidates →
+                            playtest → best scene → export
+  prompt_options.py         settings read from the sentence ("best of 5")
+  playtest.py               the bot playtest and gameplay-flow metrics
+web/app.html                the app's page (no build step)
 scripts/
-  generate.py               end to end: prompt → viewable 3D scene
+  serve.py                  the web app: prompt box, 3D view, bot report
+  generate.py               the same pipeline from the command line
   evaluate.py               consistency metrics across a suite of prompts
   ingest_assets.py          scans downloaded packs → manifest.json
   inspect_library.py        what's actually in the library, and what isn't

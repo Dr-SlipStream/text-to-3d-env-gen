@@ -459,3 +459,30 @@ def test_lamp_colour_is_warm(index, tmp_path):
     h = cfg["lightColour"].lstrip("#")
     r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
     assert r > b, "firelight should be warm"
+
+
+def test_blank_models_are_recoloured_but_textured_ones_kept(tmp_path):
+    """A model with nothing to colour it renders as a white block."""
+    import numpy as np
+    import trimesh
+    from src.export_scene import has_blank_material
+
+    plain = tmp_path / "plain.glb"
+    trimesh.creation.box().export(plain)
+    assert has_blank_material(plain)
+
+    painted = tmp_path / "painted.glb"
+    box = trimesh.creation.box()
+    box.visual = trimesh.visual.ColorVisuals(
+        mesh=box, vertex_colors=np.tile([150, 90, 60, 255],
+                                        (len(box.vertices), 1)))
+    box.export(painted)
+    assert not has_blank_material(painted)
+
+    tinted = tmp_path / "tinted.glb"
+    box = trimesh.creation.box()
+    box.visual = trimesh.visual.TextureVisuals(
+        material=trimesh.visual.material.PBRMaterial(
+            baseColorFactor=[120, 80, 40, 255]))
+    box.export(tinted)
+    assert not has_blank_material(tinted)

@@ -126,6 +126,8 @@ HTML = """<!DOCTYPE html>
   }
   #hint b { color:#dfe6f2; font-weight:600; }
   #mode { color:#7dd3a0; }
+  /* Inside the web app the side panels already carry this. */
+  body.embed #info { display:none; }
   #load {
     position:fixed; inset:0; display:flex; align-items:center;
     justify-content:center; background:#0d1330; color:#8b97ae;
@@ -134,6 +136,14 @@ HTML = """<!DOCTYPE html>
 </style>
 </head>
 <body>
+<script>
+  if (new URLSearchParams(location.search).has("embed"))
+    document.documentElement.classList.add("embed-root");
+  document.addEventListener("DOMContentLoaded", () => {
+    if (document.documentElement.classList.contains("embed-root"))
+      document.body.classList.add("embed");
+  });
+</script>
 <div id="load">Loading scene…</div>
 <canvas id="c"></canvas>
 <div id="info">
@@ -320,8 +330,10 @@ async function build() {
           if (!m) continue;
           m.transparent = true;
           m.opacity = 0.82;
-          m.roughness = 0.12;     // smooth, so it catches the sun
-          m.metalness = 0.25;     // a little, for sheen without looking metal
+          // A soft sheen, not a mirror. At 0.12 roughness a low dawn or
+          // dusk sun reflected as a blown-out white sheet up the river.
+          m.roughness = 0.42;
+          m.metalness = 0.0;
           m.depthWrite = false;
           m.needsUpdate = true;
         }

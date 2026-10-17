@@ -1,0 +1,604 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Environment Generator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #15202a;
+    --panel: #1b2833;
+    --raised: #22313e;
+    --line: #2d3e4c;
+    --text: #e4eaee;
+    --muted: #8fa1af;
+    --faint: #5f7383;
+    --ochre: #e3b04b;
+    --ochre-ink: #2a1f06;
+    --teal: #6cc4b4;
+    --bad: #e58a78;
+    --font: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--text); font-family: var(--font);
+    font-size: 14px; line-height: 1.5; font-stretch: 100%;
+  }
+  button, textarea { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--ochre); outline-offset: 2px; }
+
+  .app {
+    display: grid; height: 100vh;
+    grid-template-columns: 340px minmax(0, 1fr) 390px;
+  }
+
+  /* ---------------------------------------------------------------- left */
+  .compose {
+    background: var(--panel); border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  .compose-head { padding: 22px 22px 6px; }
+  .wordmark {
+    font-size: 22px; font-weight: 750; font-stretch: 118%;
+    letter-spacing: -0.01em; line-height: 1.1;
+  }
+  .tagline { color: var(--muted); margin-top: 6px; max-width: 30ch; }
+
+  .compose-body { padding: 16px 22px 22px; overflow-y: auto; flex: 1; }
+
+  textarea#prompt {
+    width: 100%; min-height: 108px; resize: vertical;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+    padding: 12px 13px; line-height: 1.45; font-size: 15px;
+  }
+  textarea#prompt::placeholder { color: var(--faint); }
+
+  .understood { margin-top: 10px; }
+  .understood:empty { margin-top: 0; }
+  .understood ul { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; }
+  .understood li {
+    font-size: 12.5px; padding: 3px 9px; border-radius: 999px;
+    background: var(--raised); color: var(--text);
+  }
+  .understood li.default { color: var(--muted); background: transparent;
+                           border: 1px dashed var(--line); }
+  .hint { color: var(--faint); font-size: 12.5px; margin-top: 10px; }
+  .hint em { color: var(--muted); font-style: normal; }
+
+  .go {
+    margin-top: 14px; width: 100%; border: 0; border-radius: 6px;
+    background: var(--ochre); color: var(--ochre-ink);
+    font-weight: 700; font-size: 15px; padding: 11px 14px; cursor: pointer;
+  }
+  .go:hover { filter: brightness(1.06); }
+  .go:disabled { opacity: .55; cursor: progress; }
+  .error { color: var(--bad); margin-top: 10px; font-size: 13px; }
+
+  .progress { margin-top: 18px; display: none; }
+  .progress.on { display: block; }
+  .bar { height: 3px; background: var(--line); border-radius: 2px;
+         overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--ochre);
+           transition: width .4s ease; }
+  .log {
+    margin-top: 10px; font-family: var(--mono); font-size: 11.5px;
+    color: var(--muted); max-height: 200px; overflow-y: auto;
+    white-space: pre-wrap; line-height: 1.55;
+  }
+  .log .now { color: var(--text); }
+
+  h2 {
+    font-size: 13px; font-weight: 650; color: var(--muted);
+    margin: 26px 0 8px;
+  }
+  .examples, .recent { list-style: none; }
+  .examples button, .recent button {
+    width: 100%; text-align: left; background: none; border: 0;
+    padding: 6px 8px; margin: 0 -8px; border-radius: 5px; cursor: pointer;
+    color: var(--text); line-height: 1.35;
+  }
+  .examples button:hover, .recent button:hover { background: var(--raised); }
+  .recent button { display: flex; justify-content: space-between; gap: 12px; }
+  .recent .flow { color: var(--muted); font-variant-numeric: tabular-nums;
+                  flex: none; }
+  .recent button[aria-current="true"] { background: var(--raised); }
+
+  /* -------------------------------------------------------------- centre */
+  .stage { position: relative; min-width: 0; background: #0d1330; }
+  .stage iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .empty {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    text-align: center; padding: 24px; color: var(--muted);
+    background: var(--bg);
+  }
+  .empty p { max-width: 36ch; font-size: 15px; }
+  .empty strong { display: block; color: var(--text); font-size: 20px;
+                  font-stretch: 112%; margin-bottom: 6px; }
+  .stage-title {
+    position: absolute; left: 16px; top: 14px; right: 16px;
+    pointer-events: none; text-shadow: 0 1px 8px rgba(0,0,0,.6);
+  }
+  .stage-title b { font-size: 17px; font-weight: 650; }
+  .stage-title span { display: block; color: #c9d3dc; font-size: 12.5px; }
+
+  /* --------------------------------------------------------------- right */
+  .report {
+    background: var(--panel); border-left: 1px solid var(--line);
+    overflow-y: auto; padding: 22px;
+  }
+  .report[hidden] { display: none; }
+  .score { display: flex; align-items: flex-end; gap: 14px; }
+  .score .n {
+    font-size: 72px; line-height: .85; font-weight: 800;
+    font-stretch: 125%; letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+  }
+  .score .of { color: var(--muted); font-size: 13px; padding-bottom: 4px; }
+  .score .grade {
+    margin-left: auto; font-size: 30px; font-weight: 750; font-stretch: 70%;
+    border: 2px solid var(--text); border-radius: 6px;
+    width: 46px; height: 46px; display: grid; place-items: center;
+  }
+  .score-note { color: var(--muted); margin-top: 10px; max-width: 42ch; }
+
+  .map-wrap { margin-top: 18px; }
+  canvas#map {
+    width: 100%; aspect-ratio: 1; display: block; border-radius: 6px;
+    background: #102029;
+  }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px;
+            color: var(--muted); font-size: 12px; }
+  .legend i { display: inline-block; width: 14px; height: 3px;
+              vertical-align: middle; margin-right: 6px; }
+
+  .metrics { list-style: none; margin-top: 4px; }
+  .metrics li { padding: 10px 0; border-top: 1px solid var(--line); }
+  .metrics li:first-child { border-top: 0; }
+  .m-head { display: flex; justify-content: space-between; gap: 10px; }
+  .m-head b { font-weight: 600; }
+  .m-head span { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .m-bar { height: 4px; background: var(--line); border-radius: 2px;
+           margin: 6px 0 5px; }
+  .m-bar i { display: block; height: 100%; border-radius: 2px;
+             background: var(--teal); }
+  .m-bar i.low { background: var(--bad); }
+  .m-note { color: var(--muted); font-size: 12.5px; }
+
+  .chart { width: 100%; height: 120px; display: block; }
+  .chart text { fill: var(--faint); font-size: 10px; font-family: var(--font); }
+  .chart-caption { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+
+  .cands { list-style: none; }
+  .cands li { display: grid; grid-template-columns: 92px 1fr 34px;
+              gap: 10px; align-items: center; padding: 3px 0;
+              color: var(--muted); font-size: 12.5px; }
+  .cands li.chosen { color: var(--text); font-weight: 600; }
+  .cands .track { height: 8px; background: var(--line); border-radius: 2px; }
+  .cands .track i { display: block; height: 100%; background: var(--faint);
+                    border-radius: 2px; }
+  .cands li.chosen .track i { background: var(--ochre); }
+  .cands .v { text-align: right; font-variant-numeric: tabular-nums; }
+
+  dl.facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; }
+  dl.facts dt { color: var(--muted); }
+  dl.facts dd { text-align: right; font-variant-numeric: tabular-nums; }
+  ul.warn { list-style: none; margin-top: 10px; }
+  ul.warn li { color: var(--muted); font-size: 12.5px; padding: 2px 0; }
+
+  /* -------------------------------------------------------- responsive */
+  @media (max-width: 1180px) {
+    .app { grid-template-columns: 320px minmax(0, 1fr);
+           grid-template-rows: 1fr auto; height: auto; min-height: 100vh; }
+    .stage { min-height: 70vh; }
+    .report { grid-column: 1 / -1; border-left: 0;
+              border-top: 1px solid var(--line); }
+    .report-inner { display: grid; grid-template-columns: 1fr 1fr;
+                    gap: 0 32px; }
+  }
+  @media (max-width: 760px) {
+    .app { grid-template-columns: 1fr; }
+    .compose { border-right: 0; }
+    .compose-body { overflow: visible; }
+    .stage { min-height: 62vh; }
+    .report-inner { display: block; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .bar i { transition: none; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ===================================================== compose -->
+  <aside class="compose">
+    <div class="compose-head">
+      <div class="wordmark">Environment generator</div>
+      <p class="tagline">Describe a place. A bot plays it before you do.</p>
+    </div>
+    <div class="compose-body">
+      <form id="form">
+        <label for="prompt" class="sr-only" style="position:absolute;left:-9999px">Describe a place</label>
+        <textarea id="prompt" placeholder="a foggy fishing village on the coast at dusk"
+                  autocomplete="off" spellcheck="true"></textarea>
+        <div class="understood" id="understood" aria-live="polite"></div>
+        <p class="hint">Settings go in the sentence: <em>best of 5</em>,
+          <em>variation 7</em>, <em>large</em>, <em>dense</em>,
+          <em>for unity</em>, <em>quick draft</em>.</p>
+        <button class="go" id="go" type="submit">Generate scene</button>
+        <div class="error" id="error" role="alert"></div>
+      </form>
+
+      <div class="progress" id="progress">
+        <div class="bar"><i id="bar"></i></div>
+        <div class="log" id="log"></div>
+      </div>
+
+      <h2>Try one</h2>
+      <ul class="examples" id="examples"></ul>
+
+      <h2 id="recent-head" hidden>Your scenes</h2>
+      <ul class="recent" id="recent"></ul>
+    </div>
+  </aside>
+
+  <!-- ======================================================= stage -->
+  <main class="stage" id="stage">
+    <iframe id="view" title="3D scene" hidden></iframe>
+    <div class="stage-title" id="stage-title" hidden></div>
+    <div class="empty" id="empty">
+      <p><strong>No scene yet</strong>
+        Describe a place on the left, or pick an example. You'll get a 3D
+        scene you can walk around, and a report on how well it plays.</p>
+    </div>
+  </main>
+
+  <!-- ====================================================== report -->
+  <aside class="report" id="report" hidden>
+    <div class="report-inner">
+      <section>
+        <div class="score">
+          <div class="n" id="flow">0</div>
+          <div class="of">flow score<br>out of 100</div>
+          <div class="grade" id="grade" title="grade">-</div>
+        </div>
+        <p class="score-note" id="score-note"></p>
+
+        <div class="map-wrap">
+          <canvas id="map" width="560" height="560"
+                  aria-label="Walkability map with the bot's route"></canvas>
+          <div class="legend">
+            <span><i style="background:var(--teal)"></i>Bot's route</span>
+            <span><i style="background:var(--ochre)"></i>Shortest route</span>
+            <span><i style="background:#3d4f5d;height:8px"></i>Blocked</span>
+            <span><i style="background:#c9d3dc;width:6px;height:6px"></i>Landmark</span>
+          </div>
+        </div>
+
+        <h2>What the bot measured</h2>
+        <ul class="metrics" id="metrics"></ul>
+      </section>
+
+      <section>
+        <h2>How fast the bot learned</h2>
+        <svg class="chart" id="curve" viewBox="0 0 340 120"
+             preserveAspectRatio="none" role="img"></svg>
+        <p class="chart-caption" id="curve-caption"></p>
+
+        <h2>Layouts tried</h2>
+        <ul class="cands" id="cands"></ul>
+
+        <h2>Scene</h2>
+        <dl class="facts" id="facts"></dl>
+        <ul class="warn" id="warn"></ul>
+      </section>
+    </div>
+  </aside>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const EXAMPLES = [
+  "a medieval village beside a river at dawn",
+  "a fishing harbour town on the coast at dusk",
+  "a snowy mountain village in winter, best of 5",
+  "a witch's hut in a foggy swamp",
+  "a forest camp at night with a campfire",
+  "a desert outpost around an oasis, large",
+];
+const DEFAULT_NOTES = ["scene graph layout", "3 layouts, playtested"];
+let current = null;
+
+// ------------------------------------------------------------ settings
+let optTimer = null;
+$("prompt").addEventListener("input", () => {
+  clearTimeout(optTimer);
+  optTimer = setTimeout(showUnderstood, 250);
+});
+
+async function showUnderstood() {
+  const text = $("prompt").value.trim();
+  const box = $("understood");
+  if (!text) { box.innerHTML = ""; return; }
+  try {
+    const r = await fetch("/api/options?prompt=" + encodeURIComponent(text));
+    const { options } = await r.json();
+    const notes = options.notes.slice();
+    const items = notes.map(n => `<li>${esc(n)}</li>`);
+    if (!notes.some(n => n.includes("layout")))
+      items.push(`<li class="default">${options.mode === "graph"
+        ? "scene graph layout" : "rule layout"}</li>`);
+    if (options.playtest && !notes.some(n => n.includes("layouts")))
+      items.push(`<li class="default">${options.candidates} layouts, playtested</li>`);
+    if (options.offline && !notes.some(n => n.includes("offline")))
+      items.push(`<li class="default">offline</li>`);
+    box.innerHTML = `<ul>${items.join("")}</ul>`;
+  } catch { box.innerHTML = ""; }
+}
+
+// ------------------------------------------------------------ generate
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const prompt = $("prompt").value.trim();
+  $("error").textContent = "";
+  if (!prompt) { $("error").textContent = "Describe a place to generate."; return; }
+  $("go").disabled = true; $("go").textContent = "Generating…";
+  $("progress").classList.add("on"); $("log").innerHTML = ""; setBar(3);
+  try {
+    const r = await fetch("/api/generate", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "The server refused the request.");
+    await follow(data.job);
+  } catch (err) {
+    $("error").textContent = err.message;
+  } finally {
+    $("go").disabled = false; $("go").textContent = "Generate scene";
+  }
+});
+
+$("prompt").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("form").requestSubmit();
+});
+
+function setBar(pct) { $("bar").style.width = pct + "%"; }
+
+async function follow(jobId) {
+  while (true) {
+    await new Promise(r => setTimeout(r, 700));
+    const job = await (await fetch("/api/jobs/" + jobId)).json();
+    renderLog(job.log, job.status);
+    if (job.status === "done") {
+      setBar(100);
+      await loadRecent();
+      await show(job.result.slug);
+      return;
+    }
+    if (job.status === "error")
+      throw new Error("Generation failed: " + job.error);
+  }
+}
+
+function renderLog(lines, status) {
+  const log = $("log");
+  if (status === "queued" && !lines.length) {
+    log.textContent = "Waiting for the previous scene to finish…"; return;
+  }
+  let step = 0;
+  for (const l of lines) {
+    const m = l.match(/\[(\d)\/6\]/); if (m) step = +m[1];
+  }
+  setBar(Math.max(3, step / 6 * 100 - (status === "done" ? 0 : 8)));
+  log.innerHTML = lines.map((l, i) =>
+    `<div class="${i === lines.length - 1 ? "now" : ""}">${esc(l)}</div>`).join("");
+  log.scrollTop = log.scrollHeight;
+}
+
+// ------------------------------------------------------------ scenes
+async function loadRecent() {
+  const scenes = await (await fetch("/api/scenes")).json();
+  $("recent-head").hidden = !scenes.length;
+  $("recent").innerHTML = scenes.slice(0, 20).map(s => `
+    <li><button data-slug="${esc(s.slug)}" ${current === s.slug ? 'aria-current="true"' : ""}>
+      <span>${esc(s.clean_prompt || s.prompt)}</span>
+      <span class="flow">${s.playtest ? Math.round(s.playtest.flow_score) : "–"}</span>
+    </button></li>`).join("");
+}
+
+$("recent").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (b) show(b.dataset.slug);
+});
+$("examples").innerHTML = EXAMPLES.map(t =>
+  `<li><button type="button">${esc(t)}</button></li>`).join("");
+$("examples").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  $("prompt").value = b.textContent; showUnderstood(); $("prompt").focus();
+});
+
+async function show(slug) {
+  const r = await fetch("/api/scenes/" + encodeURIComponent(slug));
+  if (!r.ok) return;
+  const s = await r.json();
+  current = slug;
+  history.replaceState(null, "", "#" + slug);
+  $("empty").hidden = true;
+  const view = $("view");
+  view.hidden = false;
+  view.src = `/scenes/${encodeURIComponent(slug)}/index.html?embed=1&t=${Date.now()}`;
+  $("stage-title").hidden = false;
+  $("stage-title").innerHTML = `<b>${esc(s.clean_prompt || s.prompt)}</b>
+    <span>${esc(sceneLine(s))}</span>`;
+  renderReport(s);
+  document.querySelectorAll("#recent button").forEach(b =>
+    b.setAttribute("aria-current", b.dataset.slug === slug ? "true" : "false"));
+}
+
+function sceneLine(s) {
+  const bits = [pretty(s.theme), `${pretty(s.terrain)}, ${s.size_m} m`];
+  if (s.features && s.features.length) bits.push(s.features.join(", "));
+  bits.push(`${s.lighting.time}, ${s.lighting.weather}`);
+  return bits.join("  /  ");
+}
+
+// ------------------------------------------------------------ report
+function renderReport(s) {
+  const p = s.playtest_detail;
+  $("report").hidden = false;
+  if (!p) {
+    $("flow").textContent = "–"; $("grade").textContent = "–";
+    $("score-note").textContent = "This scene was generated without a playtest.";
+    $("metrics").innerHTML = ""; $("cands").innerHTML = "";
+    $("curve").innerHTML = ""; $("curve-caption").textContent = "";
+    clearMap();
+  } else {
+    $("flow").textContent = Math.round(p.flow_score);
+    $("grade").textContent = p.grade;
+    $("score-note").textContent = p.connected
+      ? "How well this scene plays, scored by a bot that learned to walk " +
+        "it from one end of the road to the other."
+      : "The far end of the road can't be reached. The bot had nothing to learn.";
+    drawMap(p);
+    $("metrics").innerHTML = p.metrics.map(m => `
+      <li>
+        <div class="m-head"><b>${esc(m.label)}</b>
+          <span>${Math.round(m.score)}</span></div>
+        <div class="m-bar"><i class="${m.score < 50 ? "low" : ""}"
+             style="width:${Math.max(2, m.score)}%"></i></div>
+        <div class="m-note">${esc(m.note)}</div>
+      </li>`).join("");
+    drawCurve(p);
+  }
+
+  const best = Math.max(...s.candidates.map(c => c.flow), 1);
+  $("cands").innerHTML = s.candidates.map(c => `
+    <li class="${c.seed === s.chosen_seed ? "chosen" : ""}">
+      <span>Seed ${c.seed}${c.valid ? "" : " (invalid)"}</span>
+      <span class="track"><i style="width:${c.flow / Math.max(best, 100) * 100}%"></i></span>
+      <span class="v">${Math.round(c.flow)}</span>
+    </li>`).join("") + (s.candidates.length > 1
+      ? `<li><span></span><span>Highlighted: the layout that was kept.</span><span></span></li>` : "");
+
+  const facts = [
+    ["Understood as", pretty(s.theme) + (s.theme_recognised ? "" : " (closest)")],
+    ["Ground", `${pretty(s.terrain)}, ${s.size_m} m`],
+    ["Landscape", (s.features || []).join(", ") || "none"],
+    ["Lighting", `${s.lighting.time}, ${s.lighting.weather}`],
+    ["Layout", s.mode === "graph" ? `scene graph (${s.graph_source})` : "rules"],
+    ["Objects", s.instances.toLocaleString()],
+    ["Bridges", s.bridges ? `${s.bridges} segments` : "none"],
+    ["Triangles", (s.triangles || 0).toLocaleString()],
+    ["Valid", s.validation.valid ? "yes" : "no"],
+    ["Seed", s.chosen_seed],
+    ["Time", s.seconds + " s"],
+  ];
+  $("facts").innerHTML = facts.map(([k, v]) =>
+    `<dt>${esc(k)}</dt><dd>${esc(String(v))}</dd>`).join("");
+
+  const notes = (s.skipped_assets || []).concat(
+    (s.warnings || []).filter(w => /theme|fail|skipped|no bridge/.test(w)
+                                   && !w.startsWith("skipped")));
+  $("warn").innerHTML = [...new Set(notes)].slice(0, 6)
+    .map(w => `<li>${esc(w)}</li>`).join("");
+}
+
+function clearMap() {
+  const c = $("map"), g = c.getContext("2d");
+  g.clearRect(0, 0, c.width, c.height);
+}
+
+function drawMap(p) {
+  const c = $("map"), g = c.getContext("2d");
+  const rows = p.grid.length, cols = p.grid[0].length;
+  const W = c.width, cell = W / cols;
+  g.clearRect(0, 0, W, W);
+  g.fillStyle = "#14303a"; g.fillRect(0, 0, W, W);
+
+  // Faint survey grid every 5 cells.
+  g.strokeStyle = "rgba(143,161,175,.10)"; g.lineWidth = 1;
+  for (let i = 0; i <= cols; i += 5) {
+    g.beginPath(); g.moveTo(i * cell, 0); g.lineTo(i * cell, W); g.stroke();
+    g.beginPath(); g.moveTo(0, i * cell); g.lineTo(W, i * cell); g.stroke();
+  }
+  g.fillStyle = "#3d4f5d";
+  for (let r = 0; r < rows; r++)
+    for (let q = 0; q < cols; q++)
+      if (p.grid[r][q] === "#") g.fillRect(q * cell, r * cell, cell + .5, cell + .5);
+
+  g.fillStyle = "#c9d3dc";
+  for (const [r, q] of p.landmarks)
+    g.fillRect(q * cell + cell * .3, r * cell + cell * .3, cell * .4, cell * .4);
+
+  const line = (pts, colour, width, dash) => {
+    if (!pts || pts.length < 2) return;
+    g.save(); g.strokeStyle = colour; g.lineWidth = width;
+    g.lineJoin = "round"; g.lineCap = "round"; g.setLineDash(dash || []);
+    g.beginPath();
+    pts.forEach(([r, q], i) => {
+      const x = (q + .5) * cell, y = (r + .5) * cell;
+      i ? g.lineTo(x, y) : g.moveTo(x, y);
+    });
+    g.stroke(); g.restore();
+  };
+  line(p.optimal_route, "#e3b04b", cell * .55, [cell * .5, cell * .45]);
+  line(p.bot_route, "#6cc4b4", cell * .3);
+
+  const mark = ([r, q], label) => {
+    const x = (q + .5) * cell, y = (r + .5) * cell;
+    g.fillStyle = "#e4eaee"; g.beginPath();
+    g.arc(x, y, cell * .75, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#15202a"; g.font = `700 ${cell}px Archivo, sans-serif`;
+    g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(label, x, y + 1);
+  };
+  mark(p.start, "S"); mark(p.goal, "G");
+}
+
+function drawCurve(p) {
+  const svg = $("curve");
+  const ys = p.steps_curve;
+  if (!ys || !ys.length) {
+    svg.innerHTML = ""; $("curve-caption").textContent = "";
+    return;
+  }
+  const W = 340, H = 120, L = 26, B = 16;
+  const maxY = Math.max(...ys), minY = 0;
+  const x = i => L + i / (ys.length - 1) * (W - L - 4);
+  const y = v => 4 + (1 - (v - minY) / (maxY - minY || 1)) * (H - B - 4);
+  const path = ys.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
+  const opt = p.optimal_steps;
+  svg.innerHTML = `
+    <line x1="${L}" y1="${H - B}" x2="${W}" y2="${H - B}" stroke="#2d3e4c"/>
+    ${opt ? `<line x1="${L}" x2="${W}" y1="${y(opt)}" y2="${y(opt)}"
+       stroke="#e3b04b" stroke-dasharray="4 4"/>` : ""}
+    <path d="${path}" fill="none" stroke="#6cc4b4" stroke-width="2"
+          vector-effect="non-scaling-stroke"/>
+    <text x="0" y="10">${Math.round(maxY)}</text>
+    <text x="0" y="${H - B}">0</text>
+    <text x="${L}" y="${H - 2}">episode 1</text>
+    <text x="${W}" y="${H - 2}" text-anchor="end">${p.episodes}</text>`;
+  $("curve-caption").textContent =
+    `Steps the bot took per episode. It starts out wandering and settles ` +
+    `onto the shortest route (${opt} steps, dashed) as it learns.`;
+}
+
+// ------------------------------------------------------------ helpers
+function pretty(s) { return String(s || "").replace(/_/g, " "); }
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;",
+    ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+(async () => {
+  await loadRecent();
+  const slug = decodeURIComponent(location.hash.slice(1));
+  if (slug) show(slug);
+})();
+</script>
+</body>
+</html>

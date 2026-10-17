@@ -104,7 +104,11 @@ class ResolvedRegion:
 class RegionResolver:
     """Gives every region in the graph a concrete shape on this terrain."""
 
-    def __init__(self, graph: SceneGraph, terrain, path, rng):
+    def __init__(self, graph: SceneGraph, terrain, path, rng,
+                 radii: Optional[Dict[str, float]] = None,
+                 categories: Optional[Dict[str, str]] = None):
+        self.radii = radii or {}
+        self.categories = categories or {}
         self.graph = graph
         self.terrain = terrain
         self.path = path
@@ -112,6 +116,30 @@ class RegionResolver:
         self.size = terrain.size
         self.resolved: Dict[str, ResolvedRegion] = {}
         self._resolve_all()
+
+    def _fit_radius(self, region_id: str) -> Optional[float]:
+        """Radius that holds a region's fixed-count buildings on plots."""
+        plots = 0.0
+        for group in self.graph.groups:
+            if group.count is None:
+                continue
+            if not any(r.kind == "inside" and r.target == region_id
+                       for r in group.relations):
+                continue
+            r = self.radii.get(group.id)
+            cat = self.categories.get(group.id)
+            if r is None:
+                continue
+            if cat == "building":
+                plot = 2 * r + 7.0
+            elif cat == "structure" and r >= 2.5:
+                plot = 2 * r + 3.0
+            else:
+                continue
+            plots += group.count * plot * plot
+        if plots <= 0:
+            return None
+        return math.sqrt(plots / math.pi) * 1.25
 
     def _dry_spot(self, radius: float, tries: int = 30) -> Tuple[float, float]:
         """A centre that isn't in the water and isn't hard against an edge."""
@@ -228,6 +256,13 @@ class RegionResolver:
                 # 36m across, which is fine -- but the fixed-count groups
                 # inside it need room to spread, or a dozen tents pile into
                 # one clearing.
+                if region.kind == "settlement":
+                    # No bigger than its buildings need. A "large" village
+                    # on a 200 m map was 84 m in radius around ten houses,
+                    # which reads as farmsteads in a field, not a village.
+                    fit = self._fit_radius(region.id)
+                    if fit:
+                        radius = min(radius, fit)
                 radius = max(radius, MIN_SETTLEMENT_RADIUS)
                 radius = min(radius, self.size * 0.42)
                 if self.path and region.kind == "settlement":
@@ -466,7 +501,8 @@ def solve(graph: SceneGraph, terrain, radii: Dict[str, float],
     from .crossings import plan_crossings
     plan_crossings(terrain, scene.path)
 
-    resolver = RegionResolver(graph, terrain, scene.path, rng)
+    resolver = RegionResolver(graph, terrain, scene.path, rng,
+                              radii=radii, categories=categories)
     scene.regions = resolver.resolved
 
     occupied = _OccupancyGrid(size)
@@ -615,6 +651,9 @@ def solve(graph: SceneGraph, terrain, radii: Dict[str, float],
                         and radius <= z <= size - radius):
                     continue
                 if terrain.is_water(x, z, margin=water_margin):
+                    continue
+                # Bridge landings stay clear, or a tree blocks the way on.
+                if terrain.on_bridge(x, z, margin=radius):
                     continue
                 if terrain.slope_at(x, z) > max_slope:
                     continue

@@ -39,6 +39,50 @@ from .layout import PlacedScene
 WEB_READY = {".glb"}
 
 
+def has_blank_material(src: Path) -> bool:
+    """True if a model would render flat white: nothing to colour it with.
+
+    No texture image, no vertex colours, and every base colour white or
+    near it. That is what a model looks like when its texture lives in a
+    separate file that never came along, or when the pack relies on an
+    engine material we don't have. Such a model is recoloured from the
+    palette; everything else keeps its own art.
+    """
+    try:
+        loaded = trimesh.load(src, process=False)
+    except Exception:
+        return False
+    geoms = (list(loaded.geometry.values())
+             if isinstance(loaded, trimesh.Scene) else [loaded])
+    if not geoms:
+        return False
+    for g in geoms:
+        visual = getattr(g, "visual", None)
+        if visual is None:
+            continue
+        if getattr(visual, "kind", None) == "vertex":
+            colours = np.asarray(visual.vertex_colors)[:, :3]
+            if colours.size and colours.min() < 235:
+                return False
+            continue
+        material = getattr(visual, "material", None)
+        if material is None:
+            continue
+        for attr in ("baseColorTexture", "image"):
+            if getattr(material, attr, None) is not None:
+                return False
+        base = getattr(material, "baseColorFactor", None)
+        if base is None:
+            base = getattr(material, "main_color", None)
+        if base is not None:
+            rgb = np.asarray(base, dtype=float)[:3]
+            if rgb.max() > 1.0:
+                rgb = rgb / 255.0
+            if rgb.min() < 0.85:
+                return False
+    return True
+
+
 def _prepare_asset(src: Path, dest_dir: Path,
                    cache: Dict[str, Optional[dict]],
                    palette: bool = False,
@@ -75,7 +119,11 @@ def _prepare_asset(src: Path, dest_dir: Path,
 
         dest = dest_dir / out_name
 
-        if palette:
+        # A model that would render flat white is recoloured even when the
+        # palette is off: a white block in a textured scene is a bug, not art.
+        recolour = palette or has_blank_material(src)
+
+        if recolour:
             # Recolour from our own palette instead of trusting the source.
             # Packs vary wildly in how their materials survive loading -- some
             # arrive with a working texture, some with nothing, and a mesh

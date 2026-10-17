@@ -49,6 +49,9 @@ def build_terrain_mesh(terrain: Terrain, subdivisions: int = 128,
     Ground colour also gets low-frequency noise so large areas aren't a single
     flat shade.
     """
+    # Keep vertices about a metre apart, so a 7 m road is several vertices
+    # wide on a large map instead of a smear between two.
+    subdivisions = int(np.clip(max(subdivisions, terrain.size), 128, 256))
     n = subdivisions + 1
     xs = np.linspace(0, terrain.size, n)
     zs = np.linspace(0, terrain.size, n)
@@ -105,7 +108,10 @@ def build_terrain_mesh(terrain: Terrain, subdivisions: int = 128,
         ROAD_HALF, VERGE = 3.4, 3.0
         road = np.clip(1.0 - (best - ROAD_HALF) / VERGE, 0.0, 1.0)
         road = np.where(best <= ROAD_HALF, 1.0, road) ** 1.2
-        rgb = rgb * (1 - road[:, None] * 0.85) + dirt * (road[:, None] * 0.85)
+        # Packed earth: darker than the worn village ground, so the road
+        # still reads where it passes through the settlement.
+        packed = dirt * 0.72
+        rgb = rgb * (1 - road[:, None] * 0.92) + packed * (road[:, None] * 0.92)
 
     # -- variation --------------------------------------------------------
     # Low-frequency noise so big areas aren't one flat shade. Deterministic

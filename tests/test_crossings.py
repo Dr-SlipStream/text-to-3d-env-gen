@@ -225,3 +225,39 @@ def test_bridge_is_road_sized_not_river_sized(index, tmp_path):
         assert covered >= crossing.span * 0.95, "segments don't reach the bank"
         return
     pytest.skip("no crossing")
+
+
+def test_deck_sits_above_water_even_with_railings(tmp_path):
+    """A post-and-rail bridge was placed by the top of its railings, which
+    put the planks under the river."""
+    import trimesh
+    from types import SimpleNamespace
+    from src.crossings import Crossing, _measure, add_bridge_instances
+
+    deck = trimesh.creation.box(extents=(4.0, 0.1, 1.2))
+    deck.apply_translation([0, 0.55, 0])             # planks at 0.6
+    parts = [deck]
+    for x in (-1.8, 0, 1.8):
+        for z in (-0.55, 0.55):
+            post = trimesh.creation.box(extents=(0.1, 1.6, 0.1))
+            post.apply_translation([x, 0.8, z])       # 0 .. 1.6
+            parts.append(post)
+    model = tmp_path / "bridge_posts.glb"
+    trimesh.util.concatenate(parts).export(model)
+
+    long_, short, height, along_x, deck_level = _measure(str(model), 1.0)
+    assert height == pytest.approx(1.6, abs=0.05)
+    assert deck_level == pytest.approx(0.6, abs=0.1)
+
+    t = Terrain.generate("grassland", 120, seed=2)
+    t.apply_features([TerrainFeature(type="river")], seed=2)
+    t.features.bridges = [Crossing((50, 40), (50, 62), 2.0)]
+    scene = SimpleNamespace(terrain=t, instances=[], warnings=[])
+
+    match = SimpleNamespace(name="bridge posts", file=str(model),
+                            radius=2.0, asset={"triangles": 100})
+    lib = SimpleNamespace(best=lambda *a, **k: match)
+    assert add_bridge_instances(scene, lib) > 0
+    seg = scene.instances[0]
+    planks = seg.position[1] + deck_level * seg.scale
+    assert planks > t.water_level + 0.5, "deck under the water"

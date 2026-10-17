@@ -338,6 +338,35 @@ CORE_CATEGORIES = {"building", "structure", "light_source"}
 CORE_EXCLUSION = {"vegetation": 0.75, "rock": 0.55}
 
 
+def settlement_radius(objects, size: float, theme: str) -> float:
+    """How big the built-up core should be, from what has to fit in it.
+
+    It used to be a fixed share of the map: 60 m of radius on a 200 m scene
+    whether it held six houses or thirty, so a small village read as
+    farmsteads scattered across a field. Now each building claims a plot --
+    its own footprint plus a yard and a lane -- and the core is just big
+    enough to hold the plots, with the old share of the map as the ceiling.
+    """
+    plots = 0.0
+    for obj in objects:
+        if not getattr(obj, "resolved", True):
+            continue
+        r = obj.radius
+        # Fences, torches and lamp posts line the plots; they don't need
+        # plots of their own. Only buildings and big structures (a well, a
+        # tower) take up ground.
+        if obj.category == "building":
+            plot = 2 * r + 7.0
+        elif obj.category == "structure" and r >= 2.5:
+            plot = 2 * r + 3.0
+        else:
+            continue
+        plots += obj.quantity * plot * plot
+    radius = math.sqrt(plots / math.pi) * 1.15
+    ceiling = CORE_RADIUS.get(theme, 0.28) * size
+    return float(np.clip(radius, min(18.0, ceiling), ceiling))
+
+
 def _settlement_centre(size: float, path, rng, terrain=None
                        ) -> Tuple[float, float]:
     """Put the village on the path, near the middle of the scene.
@@ -433,7 +462,7 @@ def layout_scene(resolved: ResolvedScene, terrain: Terrain,
     terrain.flatten_path(scene.path, half_width=PATH_HALF_WIDTH + 1.5)
 
     theme = getattr(resolved.spec, "theme", "medieval_village")
-    core_r = CORE_RADIUS.get(theme, 0.28) * size
+    core_r = settlement_radius(resolved.objects, size, theme)
     core = _settlement_centre(size, scene.path, rng, terrain)
     scene.centre = core
     scene.core_radius = core_r
@@ -471,8 +500,11 @@ def layout_scene(resolved: ResolvedScene, terrain: Terrain,
         if rule == "cluster" and obj.name not in anchors:
             # Clustered props gather at the edge of the settlement, where
             # storage and yards would be, rather than anywhere at random.
+            # Houses cluster near the heart of the village; yards, stacks
+            # of crates and fences sit further out.
             angle = float(rng.uniform(0, 2 * math.pi))
-            dist = core_r * float(rng.uniform(0.5, 1.0))
+            lo, hi = (0.15, 0.55) if cat == "building" else (0.5, 1.0)
+            dist = core_r * float(rng.uniform(lo, hi))
             anchors[obj.name] = (
                 float(np.clip(core[0] + math.cos(angle) * dist,
                               size * 0.1, size * 0.9)),
@@ -503,6 +535,9 @@ def layout_scene(resolved: ResolvedScene, terrain: Terrain,
 
                 # Nothing stands in a river or a lake.
                 if terrain.is_water(x, z, margin=water_margin):
+                    continue
+                # Bridge landings stay clear, or a tree blocks the way on.
+                if terrain.on_bridge(x, z, margin=radius):
                     continue
 
                 # Keep the settlement's ground clear of forest and boulders

@@ -166,6 +166,8 @@ def evaluate_prompt(prompt: str, index: AssetIndex, seed: int,
             from src.crossings import add_bridge_instances
             add_bridge_instances(placed, index, theme=spec.theme)
         report = validate(placed)
+        from src.playtest import playtest
+        flow = playtest(placed, train_bot=False)
 
         threshold = LOW_CONFIDENCE_BY_EMBEDDER.get(
             getattr(index.embedder, "name", ""), 0.35)
@@ -212,6 +214,9 @@ def evaluate_prompt(prompt: str, index: AssetIndex, seed: int,
             "skipped": placed.skipped,
             "valid": report["valid"],
             "connected": report.get("connected"),
+            "flow": round(flow.flow_score, 1),
+            "reach_pct": round(flow.metric("reachability").value, 1),
+            "pacing": round(flow.metric("pacing").score, 1),
             "bridges": sum(1 for i in placed.instances
                            if getattr(i, "role", "") == "bridge"),
             "overlaps": report["overlaps"],
@@ -235,7 +240,8 @@ def evaluate_prompt(prompt: str, index: AssetIndex, seed: int,
 
 def print_table(rows: list) -> None:
     print(f"\n{'prompt':<42}{'theme':<17}{'terrain':<14}{'features':<14}"
-          f"{'inst':>6}{'cov':>6}{'conf':>7}{'valid':>7}{'conn':>6}{'sec':>6}")
+          f"{'inst':>6}{'cov':>6}{'conf':>7}{'valid':>7}{'conn':>6}{'flow':>6}"
+          f"{'sec':>6}")
     print("-" * 125)
     for r in rows:
         if r.get("error"):
@@ -247,7 +253,8 @@ def print_table(rows: list) -> None:
               f"{r.get('terrain', '-')[:13]:<14}"
               f"{r.get('features', '-')[:13]:<14}{r['instances']:>6}"
               f"{r['coverage_pct']:>5}%{r['mean_conf']:>7.2f}"
-              f"{flag:>7}{conn:>6}{r['total_s']:>6.1f}")
+              f"{flag:>7}{conn:>6}{r.get('flow', 0):>6.0f}"
+              f"{r['total_s']:>6.1f}")
 
 
 def report_weak(rows: list, limit: int = 30) -> None:
@@ -308,6 +315,8 @@ def summarise(rows: list) -> None:
         ("prompt coverage %", coverage),
         ("mean confidence", conf),
         ("seconds per scene", times),
+        ("bot flow score", [r.get("flow", 0) for r in ok]),
+        ("reachable ground %", [r.get("reach_pct", 0) for r in ok]),
     ]:
         print(f"{label:<26}{min(series):>10.2f}"
               f"{statistics.median(series):>10.2f}{max(series):>10.2f}")

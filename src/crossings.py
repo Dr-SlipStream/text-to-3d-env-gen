@@ -38,6 +38,9 @@ BANK_OVERLAP = 2.5
 # Width of the walkable corridor across a bridge.
 DECK_HALF_WIDTH = 2.5
 
+# Lowest a deck may sit above the water, in metres.
+DECK_CLEARANCE = 0.8
+
 # Spans shorter than this are not worth a bridge; the road just fords.
 MIN_SPAN = 3.0
 
@@ -125,7 +128,7 @@ def find_crossings(terrain, path: List[Tuple[float, float]]) -> List[Crossing]:
                float(np.clip(end[1], 0, size)))
 
         deck = max(terrain.height_at(*before), terrain.height_at(*after),
-                   terrain.water_level + 0.4)
+                   terrain.water_level + DECK_CLEARANCE)
         crossing = Crossing(start=start, end=end, deck_height=float(deck))
         if crossing.span >= MIN_SPAN:
             crossings.append(crossing)
@@ -134,15 +137,32 @@ def find_crossings(terrain, path: List[Tuple[float, float]]) -> List[Crossing]:
     return crossings
 
 
-def crossing_cost(terrain, path) -> float:
-    """How awkward a road is to bridge: total span, plus a charge per bridge.
+def _path_length(path) -> float:
+    return sum(math.dist(path[k], path[k + 1]) for k in range(len(path) - 1))
 
-    Used to choose between candidate roads. One short, square crossing is a
-    bridge; a road that wanders along the riverbed needs a forty-metre span
-    or three bridges in a row, and reads as a mistake.
+
+def crossing_cost(terrain, path, full_length: float = 0.0) -> float:
+    """How good a road is around water. Lower is better.
+
+    A river splits the map in two, and the road is what joins the halves:
+    a scene with a river and a road that never crosses it leaves half the
+    place behind water. So with a river the target is exactly one crossing,
+    short and square; with only lakes or sea the target is none. A road that
+    wanders along the riverbed needs a forty-metre span or three bridges in
+    a row, and reads as a mistake either way.
+
+    `full_length` is the road's length before any trimming at the sea; a
+    road cut much shorter is a dead end and costs accordingly.
     """
     crossings = find_crossings(terrain, path)
-    return sum(c.span for c in crossings) + 25.0 * len(crossings)
+    features = getattr(terrain, "features", None)
+    wants = 1 if (features is not None and features.rivers) else 0
+    cost = sum(c.span for c in crossings)
+    cost += 40.0 * abs(len(crossings) - wants)
+    if full_length > 0:
+        lost = max(0.0, full_length - _path_length(path)) / full_length
+        cost += 30.0 * lost
+    return cost
 
 
 def trim_to_land(terrain, path):
@@ -155,10 +175,16 @@ def trim_to_land(terrain, path):
     """
     if not path or terrain is None or terrain.water_level is None:
         return path
+    # Only the open sea cuts a road short. A river or lake at the edge of
+    # the map is still something to bridge -- trimming there let the road
+    # chooser dodge every bridge by stopping at the bank.
+    is_sea = getattr(terrain, "is_sea", None)
+    if is_sea is None:
+        return list(path)
     start, end = 0, len(path)
-    while start < end and terrain.is_water(*path[start], margin=1.0):
+    while start < end and is_sea(*path[start], margin=1.0):
         start += 1
-    while end > start and terrain.is_water(*path[end - 1], margin=1.0):
+    while end > start and is_sea(*path[end - 1], margin=1.0):
         end -= 1
     return list(path[start:end])
 
@@ -170,16 +196,15 @@ def choose_road(terrain, size: float, rng, generate, tries: int = 10):
 
     best, best_cost = None, None
     for _ in range(tries):
-        candidate = trim_to_land(terrain, generate(size, rng))
+        raw = generate(size, rng)
+        candidate = trim_to_land(terrain, raw)
         if len(candidate) < 12:
             # Barely any road left once the sea is cut off; try another.
             cost = 1e6 - len(candidate)
         else:
-            cost = crossing_cost(terrain, candidate)
+            cost = crossing_cost(terrain, candidate, _path_length(raw))
         if best is None or cost < best_cost:
             best, best_cost = candidate, cost
-        if cost == 0:
-            break
     if len(best) < 2:
         return generate(size, rng)
     return best
@@ -194,7 +219,118 @@ def plan_crossings(terrain, path) -> List[Crossing]:
     crossings = find_crossings(terrain, path)
     if crossings and terrain.features is not None:
         terrain.features.bridges = crossings
+    if path and terrain.features is not None:
+        crossings = crossings + connect_banks(terrain, path)
     return crossings
+
+
+# Banks smaller than this share of the map are left as they are: a sliver of
+# land in a river bend is scenery, not somewhere the player needs to go.
+MIN_BANK_SHARE = 0.04
+MAX_FOOTBRIDGE_SPAN = 45.0
+
+
+def _land_grid(terrain, resolution: int):
+    cell = terrain.size / resolution
+    land = np.ones((resolution, resolution), dtype=bool)
+    for r in range(resolution):
+        for c in range(resolution):
+            x, z = (c + 0.5) * cell, (r + 0.5) * cell
+            if terrain.on_bridge(x, z, margin=cell * 0.5):
+                continue
+            # The same test the playtest's walkability grid uses, so a bank
+            # counted as joined here is joined for the bot too.
+            if terrain.is_water(x, z, margin=cell * 0.4) \
+                    or terrain.slope_at(x, z) > 0.45:
+                land[r, c] = False
+    return land, cell
+
+
+def _components(land):
+    from collections import deque
+    rows, cols = land.shape
+    label = np.full(land.shape, -1, dtype=int)
+    n = 0
+    for r in range(rows):
+        for c in range(cols):
+            if not land[r, c] or label[r, c] >= 0:
+                continue
+            label[r, c] = n
+            q = deque([(r, c)])
+            while q:
+                a, b = q.popleft()
+                for da, db in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    na, nb = a + da, b + db
+                    if 0 <= na < rows and 0 <= nb < cols and land[na, nb] \
+                            and label[na, nb] < 0:
+                        label[na, nb] = n
+                        q.append((na, nb))
+            n += 1
+    return label, n
+
+
+def connect_banks(terrain, path, resolution: int = 40) -> List[Crossing]:
+    """Footbridges to any sizeable bank the road leaves cut off.
+
+    A river that bends through a V can meet the map edge twice. The road
+    crosses one arm, and everything beyond the other is unreachable -- the
+    RL playtest found up to 46% of open ground cut off this way. Each such
+    bank gets one bridge at the narrowest point between it and the land the
+    road already reaches, and the search repeats until nothing big is left.
+    """
+    if terrain.water_level is None or not path:
+        return []
+
+    added: List[Crossing] = []
+    size = terrain.size
+    for _ in range(4):
+        land, cell = _land_grid(terrain, resolution)
+        label, n = _components(land)
+        sr = int(np.clip(path[0][1] / cell, 0, resolution - 1))
+        sc = int(np.clip(path[0][0] / cell, 0, resolution - 1))
+        home = label[sr, sc]
+        if home < 0:
+            return added
+        reached = label == home
+
+        best = None
+        for k in range(n):
+            if k == home:
+                continue
+            comp = label == k
+            if comp.sum() < MIN_BANK_SHARE * resolution * resolution:
+                continue
+            a = np.argwhere(reached)
+            b = np.argwhere(comp)
+            # Nearest pair of cells, one on each bank.
+            d = np.hypot(a[:, None, 0] - b[None, :, 0],
+                         a[:, None, 1] - b[None, :, 1])
+            i, j = np.unravel_index(int(np.argmin(d)), d.shape)
+            span = float(d[i, j]) * cell
+            if best is None or span < best[0]:
+                best = (span, a[i], b[j])
+
+        if best is None or best[0] > MAX_FOOTBRIDGE_SPAN:
+            return added
+
+        _, (ar, ac), (br, bc) = best
+        ax, az = (ac + 0.5) * cell, (ar + 0.5) * cell
+        bx, bz = (bc + 0.5) * cell, (br + 0.5) * cell
+        dx, dz = bx - ax, bz - az
+        length = math.hypot(dx, dz) or 1.0
+        ux, uz = dx / length, dz / length
+        reach = BANK_OVERLAP + cell
+        start = (float(np.clip(ax - ux * reach, 0, size)),
+                 float(np.clip(az - uz * reach, 0, size)))
+        end = (float(np.clip(bx + ux * reach, 0, size)),
+               float(np.clip(bz + uz * reach, 0, size)))
+        deck = max(terrain.height_at(ax, az), terrain.height_at(bx, bz),
+                   terrain.water_level + DECK_CLEARANCE)
+        bridge = Crossing(start=start, end=end, deck_height=float(deck))
+        terrain.features.bridges.append(bridge)
+        added.append(bridge)
+
+    return added
 
 
 # ---------------------------------------------------------------------------
@@ -210,9 +346,37 @@ MAX_BRIDGE_HEIGHT = 4.0
 MAX_SEGMENTS = 16
 
 
-def _measure(asset_file: str, fallback_radius: float):
-    """(long, short, height, long_axis_is_x) for a model, in model units.
+def _deck_level(mesh) -> Optional[float]:
+    """Height of the walking surface in a bridge model, in model units.
 
+    The top of a bridge model is often not its deck: railings, posts and
+    arches stand above the planks. Placing the model by its top put the
+    deck of a post-and-rail bridge under the river. The deck is the largest
+    upward-facing surface, so this weighs every upward face by its area
+    and takes the height where most of that area sits.
+    """
+    try:
+        normals = mesh.face_normals
+        areas = mesh.area_faces
+        heights = mesh.triangles_center[:, 1]
+    except Exception:
+        return None
+    up = normals[:, 1] > 0.8
+    if not up.any():
+        return None
+    lo, hi = float(mesh.bounds[0][1]), float(mesh.bounds[1][1])
+    if hi - lo < 1e-6:
+        return hi
+    bins = np.linspace(lo, hi, 25)
+    weight, edges = np.histogram(heights[up], bins=bins, weights=areas[up])
+    k = int(np.argmax(weight))
+    return float((edges[k] + edges[k + 1]) / 2)
+
+
+def _measure(asset_file: str, fallback_radius: float):
+    """(long, short, height, long_axis_is_x, deck) for a model.
+
+    Model units throughout; `deck` is measured up from the model's base.
     Bridge models in different packs are built along different axes, so
     reading the mesh is the only reliable way to orient one along a road.
     """
@@ -223,10 +387,12 @@ def _measure(asset_file: str, fallback_radius: float):
         ex, ey, ez = (float(v) for v in (hi - lo))
         along_x = ex >= ez
         long_, short = (ex, ez) if along_x else (ez, ex)
-        return long_, max(short, 1e-3), max(ey, 1e-3), along_x
+        deck = _deck_level(mesh)
+        deck = (deck - float(lo[1])) if deck is not None else ey
+        return long_, max(short, 1e-3), max(ey, 1e-3), along_x, deck
     except Exception:
         d = max(fallback_radius * 2.0, 1e-3)
-        return d, d * 0.5, d * 0.3, None
+        return d, d * 0.5, d * 0.3, None, d * 0.3
 
 
 def add_bridge_instances(scene, index, theme: Optional[str] = None) -> int:
@@ -247,7 +413,8 @@ def add_bridge_instances(scene, index, theme: Optional[str] = None) -> int:
             "no bridge model in the library; crossings left as fords")
         return 0
 
-    long_, short, height, along_x = _measure(match.file, match.radius)
+    long_, short, height, along_x, deck_model = _measure(match.file,
+                                                         match.radius)
 
     # Size the model by its width, not by the span: as wide as the road,
     # no taller than a footbridge. Then lay as many copies end to end as it
@@ -272,9 +439,9 @@ def add_bridge_instances(scene, index, theme: Optional[str] = None) -> int:
             # The model's length runs along X; the heading aims +Z.
             rotation += math.pi / 2
 
-        # The top of the model sits just above the bank, so the deck meets
-        # the road and any arches or piers reach down into the water.
-        base_y = crossing.deck_height - height * scale + 0.25
+        # The deck -- not the top of the railings -- sits just above the
+        # bank, so it meets the road and piers reach down into the water.
+        base_y = crossing.deck_height + 0.2 - deck_model * scale
 
         (ax, az), (bx, bz) = crossing.start, crossing.end
         for k in range(count):
