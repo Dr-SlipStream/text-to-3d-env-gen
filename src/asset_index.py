@@ -300,8 +300,6 @@ class AssetIndex:
 
             results.append(AssetMatch(asset, score, reason))
 
-            results.append(AssetMatch(asset, score, reason))
-
         results.sort(key=lambda m: m.score, reverse=True)
         return results[:top_k]
 
